@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+websockets==14.2
+playwright==1.49.1
+google-genai>=1.0.0
+Pillow==11.1.0
+modal==0.73.45
+python-dotenv==1.0.1
+httpx==0.28.1

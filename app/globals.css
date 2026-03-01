@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --bg-base: #08090d;
+  --bg-surface: #0f1117;
+  --bg-elevated: #181b25;
+  --border-default: #252a3a;
+  --border-focus: #3d4560;
+  --text-primary: #d4d7e0;
+  --text-secondary: #7a8099;
+  --text-muted: #4a506a;
+
+  --status-pass: #22c55e;
+  --status-fail: #ef4444;
+  --status-warn: #eab308;
+  --status-info: #3b82f6;
+
+  --accent-accessibility: #3b82f6;
+  --accent-chaos: #6b7280;
+  --accent-demographic: #14b8a6;
+  --accent-behavioral: #8b5cf6;
+}
+
+@theme inline {
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-border-default: var(--border-default);
+  --color-border-focus: var(--border-focus);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-status-pass: var(--status-pass);
+  --color-status-fail: var(--status-fail);
+  --color-status-warn: var(--status-warn);
+  --color-status-info: var(--status-info);
+  --color-accent-accessibility: var(--accent-accessibility);
+  --color-accent-chaos: var(--accent-chaos);
+  --color-accent-demographic: var(--accent-demographic);
+  --color-accent-behavioral: var(--accent-behavioral);
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-sans: var(--font-dm-sans), system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-surface); }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Terminal cursor */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.cursor-blink::after {
+  content: "█";
+  animation: blink 1s step-end infinite;
+  color: var(--status-pass);
+}
+
+/* Score count animation */
+@keyframes count-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}

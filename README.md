@@ -1,36 +1,101 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# trashmy.tech
 
-## Getting Started
+Paste a URL. 50 AI personas attack your site in 60 seconds. Get a report that tells you exactly what to fix.
 
-First, run the development server:
+**[trashmy.tech](https://trashmy.tech)**
+
+---
+
+## What is this?
+
+User testing should be the gold standard. But we ship so fast now — a founder deploys at 2am and it's live before anyone's tested it. Why can't testing keep up with shipping?
+
+trashmy.tech lets you paste any URL and instantly see how real people would experience it. What's working, what's broken, who's getting left behind.
+
+## How it works
+
+You paste a URL and optionally describe your target audience ("college students applying for financial aid, mostly on phones"). Then three things happen:
+
+### 1. 50 personas launch in parallel
+Each one is a real browser instance running on [Modal](https://modal.com), not a simulation. A 68-year-old woman zooming to 200%. A blind developer on a screen reader. A chaos agent injecting SQL into every form field. A 13-year-old on a cracked iPhone SE. 20 of these are our permanent testing crew. The other 30 are generated specifically for YOUR audience using Gemini.
+
+### 2. AI readability audit
+Not Google SEO — AI SEO. We check if ChatGPT, Claude, and Perplexity can even access your content by auditing `robots.txt` for 12 AI-specific bots, checking for `llms.txt`, evaluating structured data, and scoring how extractable and citable your content is. Lighthouse gives you a Google score. We give you an AI score.
+
+### 3. A report that actually helps
+Score out of 100, six category breakdowns, annotated screenshots with red bounding boxes pointing to exact problems ("Button: 1x44px, below WCAG minimum"), persona verdicts, and ranked fixes. The last section generates a complete prompt with all your audit data baked in — copy it, paste it into ChatGPT or Claude, get code-level fix instructions immediately.
+
+## Tech stack
+
+| Layer | Tech |
+|-------|------|
+| Frontend | Next.js 14, React 19, Tailwind CSS, Framer Motion |
+| Backend | FastAPI, WebSockets |
+| Browser agents | Playwright, Modal (50 parallel containers) |
+| AI | Gemini 3.1 Pro (report generation), Gemini 3 Flash (personas, annotations) |
+| Accessibility | axe-core |
+| Image annotation | Pillow |
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 18+
+- Python 3.10+
+- A [Gemini API key](https://ai.google.dev/)
+- A [Modal](https://modal.com) account (for parallel browser agents)
+
+### Frontend
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Backend
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cd backend
+pip install -r requirements.txt
+playwright install
+```
 
-## Learn More
+Create `backend/.env`:
 
-To learn more about Next.js, take a look at the following resources:
+```
+GEMINI_API_KEY=your_key_here
+USE_MODAL=true
+AGENT_COUNT=20
+HEADLESS=false
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Run the server:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+uvicorn main:app --reload --port 8000
+```
 
-## Deploy on Vercel
+### Full stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+With both running, open `localhost:3000`, paste a URL, and hit **Trash it**.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Architecture
+
+```
+browser (localhost:3000)
+  │
+  ├── POST /v1/tests          → creates test, returns test_id
+  └── WS   /ws/{test_id}      → streams agent progress in real-time
+                                    │
+                                    ├── 50 Modal containers (Playwright browsers)
+                                    ├── Gemini: generate 30 custom personas
+                                    ├── Gemini: annotate screenshots
+                                    ├── Gemini: generate final report
+                                    └── axe-core: accessibility audit
+```
+
+## Built at HackIllinois 2026
+
+Solo project. Started 15 hours into the hackathon after the original team dropped out.

@@ -1,4 +1,4 @@
-"""trashmy.tech — report generator using Gemini with structured reasoning."""
+"""trashmy.tech — Report generator using Gemini 3.1 Pro with thinking + structured JSON."""
 
 import json
 import os
@@ -8,224 +8,260 @@ import traceback
 from google import genai
 from google.genai.types import GenerateContentConfig
 
-SYSTEM_PROMPT = """\
-You are the analysis engine for trashmy.tech, a website testing tool that deploys
-AI personas to test real websites.
+from annotator import annotate_overview_screenshot
 
-You will receive structured test data from a crawler and persona sessions.
-Your job is to reason through this data and produce accurate, calibrated ratings.
+# ---------------------------------------------------------------------------
+# Model strategy — one API key, two models
+# ---------------------------------------------------------------------------
+REPORT_MODEL = "gemini-3.1-pro-preview"       # max reasoning for scored report
+ANNOTATION_MODEL = "gemini-3-flash-preview"    # fast vision for bounding boxes
 
-RATING PRINCIPLES:
-- Every score must be justified by specific data points from the test results.
-- Do not infer problems that aren't evidenced in the data. If something wasn't
-  tested, say so rather than guessing.
-- Scores should be calibrated: a site that loads fast, has clean forms, and works
-  for most personas but has 10 accessibility violations might be a 65. A site where
-  4 personas are completely blocked and the server crashes on adversarial input is a 25.
-- A perfect 100 is extremely rare. Most decent sites score 55-75.
+# ---------------------------------------------------------------------------
+# System prompt — concise, clinical, calibrated
+# ---------------------------------------------------------------------------
+GEMINI_REPORT_PROMPT = """You are the report engine for trashmy.tech. You produce concise, data-driven website audit reports.
 
-NARRATIVE PRINCIPLES:
-- Persona stories must reference specific actions and elements from the test data.
-  "Margaret clicked the element labeled 'Sign In' three times" not "Margaret had trouble."
-- Reference screenshot steps by number so the frontend can display the right image.
-- The "would_recommend" verdict should reflect whether this persona could accomplish
-  a basic task on the site.
+VOICE: Direct. Clinical. Like a senior consultant who bills $500/hour and doesn't waste words. No filler. No "it appears that" or "it is worth noting." State facts and move on.
 
-TONE: Brutally honest but constructive. Like a disappointed mentor who roasts the
-site but gives actionable fixes. Darkly funny where appropriate.
+SCORING RULES:
+- Only count findings with type "ux_failure" or is_site_bug=true against the score. Findings with type "tool_limitation" mean our testing tool (Playwright) couldn't interact, NOT that the site is broken. A real user likely can use elements our tool cannot.
+- axe-core violations are always real. Count them.
+- Measured values are always real (element sizes, timing, contrast ratios). Count them.
+- If >50% of agents hit tool_limitation, set confidence to "low" and say "partially tested" -- don't pretend you know the full picture.
+- CALIBRATION ANCHORS (use these as reference points):
+  * 90-100: Near-perfect. Fast, accessible, no real issues found. Very rare.
+  * 75-89: Polished professional site (Apple, Google, Stripe). Fast load, clean UX, but has accessibility gaps like missing alt text or small targets. These are GOOD sites with room to improve.
+  * 60-74: Decent site with real usability problems. Navigation confusion, broken flows, multiple a11y failures.
+  * 40-59: Significant problems. Users struggle to complete tasks. Major a11y violations.
+  * 0-39: Fundamentally broken. Pages crash, forms don't submit, critical content missing.
+- Missing image alt text alone should NOT drop a polished site below 70. It's a MEDIUM issue, not a site-killer.
+- Fast load time (<2s) is a strong positive signal. Weight it.
+- NEVER score below 40 based only on tool_limitation findings.
+- The base_score provided is a starting calibration. You may adjust ±15 points based on your analysis, but explain why.
 
-WHAT WORKS:
-- Always include what works well. If the mobile layout is clean, say so.
-  This makes the report credible.
+REPORT STRUCTURE (follow this exactly):
 
-WHAT DOESN'T WORK:
-- Be specific. Not "accessibility needs improvement" but "12 images missing alt text,
-  heading hierarchy skips from h1 to h4, no skip-navigation link."
+1. SCORE: Single number 0-100. One sentence explaining why. Confidence level.
 
-Respond with ONLY valid JSON matching the schema below. No markdown fences.
-"""
+2. THE THIRTY-SECOND VERSION: 2-3 sentences max. A busy CEO reads this and knows whether to panic or not. Reference the single most important finding and the single best thing about the site.
 
-REPORT_SCHEMA = """\
-{
-  "overall_score": int (0-100),
-  "score_reasoning": "2-3 sentences explaining why this score",
-  "confidence": float (0-1),
+3. FIVE SCORES (one line each):
+   - Accessibility: [score]/100 -- [one sentence with specific data point]
+   - Security: [score]/100 -- [one sentence]
+   - Usability: [score]/100 -- [one sentence]
+   - Mobile: [score]/100 -- [one sentence]
+   - Performance: [score]/100 -- [one sentence]
+
+4. WHAT'S GOOD (2-4 bullets, each 1 sentence):
+   Real things that work. Fast load? Clean layout? Good form validation? Say it. This makes the report credible. Always find something.
+
+5. WHAT'S BROKEN (2-5 items, ranked by severity):
+   Each item:
+   - Severity tag: CRITICAL / HIGH / MEDIUM / LOW
+   - One-line title
+   - One-line description with measured evidence
+   - Who it affects: list persona names
+   - One-line fix
+
+6. PERSONA VERDICTS (for each persona that ran):
+   Format: [Name] -- [outcome] -- [would recommend: yes/no]
+   Then 1-2 sentences of narrative ONLY if something interesting happened. Skip boring completions. Focus on dramatic moments. If a persona was blocked by tool_limitation, say: "[Name] could not be fully tested due to testing tool limitations" -- do NOT blame the site.
+
+7. TOP 3 RECOMMENDATIONS (ordered by impact):
+   Each: one sentence describing what to do + estimated user impact percentage
+
+RULES FOR NARRATIVES:
+- Reference specific step numbers: "At step 4, Margaret clicked..."
+- Include measured values: "28x28px", "3.2 second load", "Tab pressed 12 times"
+- Don't repeat the same finding across multiple personas -- mention it once, list all affected personas
+- Keep persona narratives to 2 sentences max unless genuinely critical
+
+OUTPUT: Valid JSON matching the schema. No markdown. No preamble."""
+
+# ---------------------------------------------------------------------------
+# Report JSON schema
+# ---------------------------------------------------------------------------
+REPORT_SCHEMA = """{
+  "overall_score": 0,
+  "score_reasoning": "",
+  "confidence": "high|moderate|low",
+
+  "thirty_second_summary": "",
 
   "category_scores": {
-    "accessibility": {
-      "score": int (0-100),
-      "reasoning": "1-2 sentences",
-      "key_evidence": ["specific data points"]
-    },
-    "security": {
-      "score": int (0-100),
-      "reasoning": "1-2 sentences",
-      "key_evidence": ["specific data points"]
-    },
-    "usability": {
-      "score": int (0-100),
-      "reasoning": "1-2 sentences",
-      "key_evidence": ["specific data points"]
-    },
-    "mobile": {
-      "score": int (0-100),
-      "reasoning": "1-2 sentences",
-      "key_evidence": ["specific data points"]
-    },
-    "performance": {
-      "score": int (0-100),
-      "reasoning": "1-2 sentences",
-      "key_evidence": ["specific data points"]
-    }
+    "accessibility": {"score": 0, "one_liner": ""},
+    "security": {"score": 0, "one_liner": ""},
+    "usability": {"score": 0, "one_liner": ""},
+    "mobile": {"score": 0, "one_liner": ""},
+    "performance": {"score": 0, "one_liner": ""}
   },
 
-  "executive_summary": "3-4 sentences, direct, evidence-based",
+  "whats_good": [
+    {"title": "", "detail": "", "benefited": ["persona names"]}
+  ],
+
+  "whats_broken": [
+    {
+      "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+      "title": "",
+      "description": "",
+      "affected_personas": ["names"],
+      "fix": "",
+      "screenshot_step": null
+    }
+  ],
 
   "persona_verdicts": [
     {
-      "persona_id": "A1",
-      "persona_name": "Margaret",
-      "would_recommend": true/false,
-      "narrative": "3-5 vivid sentences telling their story with specific actions",
-      "outcome": "completed/struggled/blocked",
-      "primary_barrier": "what stopped them, if anything, or null"
+      "persona_id": "",
+      "name": "",
+      "category": "",
+      "outcome": "completed|struggled|blocked|not_tested",
+      "would_recommend": true,
+      "time_seconds": 0,
+      "narrative": "",
+      "key_screenshot_step": null
     }
   ],
 
-  "top_issues": [
-    {
-      "rank": 1,
-      "title": "Issue title",
-      "severity": "critical/major/minor",
-      "category": "accessibility/security/usability/mobile/performance",
-      "description": "What's wrong and why it matters",
-      "affected_personas": ["names"],
-      "fix": "How to fix it",
-      "impact_estimate": "affects ~X% of users based on persona coverage"
-    }
+  "recommendations": [
+    {"rank": 1, "action": "", "impact": ""}
   ],
 
-  "what_works": [
-    {
-      "title": "What's good",
-      "detail": "Why it's good",
-      "personas_who_benefited": ["names"]
-    }
-  ],
-
-  "what_doesnt_work": [
-    {
-      "title": "What's broken",
-      "detail": "Why it's broken",
-      "personas_who_suffered": ["names"]
-    }
-  ],
-
-  "accessibility_audit": {
-    "total_violations": int,
-    "critical": int,
-    "serious": int,
-    "moderate": int,
-    "minor_count": int,
-    "images_missing_alt": int,
-    "details": ["specific findings"]
-  },
-
-  "chaos_test_summary": {
-    "inputs_tested": int,
-    "inputs_rejected": int,
-    "inputs_accepted_incorrectly": int,
-    "server_errors": int,
-    "worst_finding": "description"
-  },
-
-  "recommendations": ["top 3 ordered by impact, each 1-2 sentences"]
-}
-"""
+  "testing_notes": {
+    "total_personas": 0,
+    "fully_tested": 0,
+    "partially_tested": 0,
+    "real_findings": 0,
+    "tool_limitations": 0,
+    "axe_violations": 0
+  }
+}"""
 
 
+# ---------------------------------------------------------------------------
+# Session classification
+# ---------------------------------------------------------------------------
 def _classify_sessions(sessions: list[dict]) -> dict:
     total = len(sessions)
-    completed = 0
-    blocked_list = []
-    struggled_list = []
-    fine_list = []
-
-    for s in sessions:
-        outcome = s.get("outcome", "struggled")
-        if outcome == "completed":
-            completed += 1
-            fine_list.append(s)
-        elif outcome == "blocked":
-            blocked_list.append(s)
-        else:
-            struggled_list.append(s)
+    completed = sum(1 for s in sessions if s.get("outcome") == "completed")
+    blocked = [s for s in sessions if s.get("outcome") == "blocked"]
+    struggled = [s for s in sessions if s.get("outcome") == "struggled"]
+    fine = [s for s in sessions if s.get("outcome") == "completed"]
 
     return {
-        "total": total,
-        "completed": completed,
-        "blocked": blocked_list,
-        "struggled": struggled_list,
-        "fine": fine_list,
+        "total": total, "completed": completed,
+        "blocked": blocked, "struggled": struggled, "fine": fine,
     }
 
 
-def _compute_base_score(crawl_data: dict, stats: dict) -> int:
-    """Compute a base score from quantitative data."""
+def _compute_base_score(crawl_data: dict, stats: dict, sessions: list[dict]) -> int:
+    """Compute calibrated base score excluding tool limitations."""
     total = stats["total"] or 1
-    completion_rate = stats["completed"] / total
+
+    # Count real vs tool issues
+    total_tool_lims = sum(len(s.get("tool_limitations", [])) for s in sessions)
+    total_real = sum(
+        len([f for f in s.get("findings", []) if f.get("is_site_bug", True)])
+        for s in sessions
+    )
+
+    # Adjusted completion rate — be generous when tool limitations dominate
+    adjusted_completed = stats["completed"]
+    for s in sessions:
+        if s.get("outcome") != "completed":
+            tool_lims = len(s.get("tool_limitations", []))
+            real_issues = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
+            critical_real = len([f for f in real_issues if f.get("type") in ("critical", "major")])
+            if tool_lims > 0 and critical_real == 0:
+                # Agent was mostly blocked by our tool, not the site
+                adjusted_completed += 0.7
+            elif tool_lims > 0 and critical_real <= 1:
+                adjusted_completed += 0.4
+    completion_rate = adjusted_completed / total
 
     # Completion: 0-40 points
     completion_points = completion_rate * 40
 
-    # Accessibility: 0-30 points (deduct per violation)
+    # Accessibility: 0-30 points
     violations = crawl_data.get("accessibility_violations", [])
-    critical_violations = sum(1 for v in violations if v.get("impact") == "critical")
-    serious_violations = sum(1 for v in violations if v.get("impact") == "serious")
-    a11y_deductions = critical_violations * 5 + serious_violations * 3 + max(0, len(violations) - critical_violations - serious_violations)
-    a11y_points = max(0, 30 - a11y_deductions)
+    critical_v = sum(1 for v in violations if v.get("impact") == "critical")
+    serious_v = sum(1 for v in violations if v.get("impact") == "serious")
+    moderate_v = sum(1 for v in violations if v.get("impact") == "moderate")
+    minor_v = len(violations) - critical_v - serious_v - moderate_v
+    a11y_deductions = critical_v * 6 + serious_v * 3 + moderate_v * 1.5 + minor_v * 0.5
+    a11y_points = max(5, 30 - int(a11y_deductions))
+    if len(violations) == 0:
+        a11y_points = 30
 
     # Performance: 0-15 points
-    load_time = crawl_data.get("page_load_time_ms", 5000)
-    if load_time < 1000:
-        perf_points = 15
-    elif load_time < 3000:
-        perf_points = 10
-    elif load_time < 5000:
-        perf_points = 5
-    else:
-        perf_points = 2
+    load_time = crawl_data.get("page_load_time_ms") or 5000
+    if load_time < 1000: perf_points = 15
+    elif load_time < 2000: perf_points = 12
+    elif load_time < 3000: perf_points = 10
+    elif load_time < 5000: perf_points = 5
+    else: perf_points = 2
 
     # Content quality: 0-15 points
     seo = crawl_data.get("seo", {})
     content_points = 0
-    if seo.get("has_h1"): content_points += 5
-    if seo.get("has_meta_description"): content_points += 5
-    if seo.get("has_viewport"): content_points += 5
+    if seo.get("has_h1"): content_points += 4
+    if seo.get("has_meta_description"): content_points += 4
+    if seo.get("has_viewport"): content_points += 4
+    if seo.get("has_lang"): content_points += 2
+    if seo.get("has_canonical"): content_points += 1
 
     overall = round(completion_points + a11y_points + perf_points + content_points)
+
+    # Bump for tool-limitation-heavy runs — don't punish the site for our tool's failures
+    if total_tool_lims > total_real * 2:
+        # Tool limitations dominate — site is probably better than we can measure
+        bump = min(12, total_tool_lims // 4)
+        overall = min(100, overall + bump)
+
     return min(overall, 100)
 
 
+# ---------------------------------------------------------------------------
+# Main report generation
+# ---------------------------------------------------------------------------
 async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
-    """Generate the final trashmy.tech audit report using Gemini."""
-
+    """Generate report using Gemini 3.1 Pro with thinking + structured JSON."""
     stats = _classify_sessions(sessions)
-    base_score = _compute_base_score(crawl_data, stats)
+    base_score = _compute_base_score(crawl_data, stats, sessions)
 
-    # Summarize sessions for LLM (no screenshots — too large)
+    # Separate real findings from tool limitations
+    real_findings = []
+    tool_limitations = []
+    for s in sessions:
+        for f in s.get("findings", []):
+            if f.get("is_site_bug", True):
+                real_findings.append(f)
+            else:
+                tool_limitations.append(f)
+        for tl in s.get("tool_limitations", []):
+            tool_limitations.append(tl)
+
+    # Summarize sessions for prompt (no screenshots)
     def _summarize_session(s):
         p = s.get("persona", {})
         steps_summary = []
-        for step in s.get("steps", [])[:10]:
-            steps_summary.append({
+        for step in s.get("steps", [])[:12]:
+            step_data = {
                 "step": step.get("step_number"),
                 "action": step.get("action"),
                 "target": step.get("target_element", "")[:60],
                 "result": step.get("result", "")[:100],
                 "target_size": step.get("target_size_px"),
                 "timestamp_ms": step.get("timestamp_ms"),
-            })
+                "click_strategy": step.get("click_strategy"),
+            }
+            fc = step.get("failure_classification")
+            if fc:
+                step_data["failure_type"] = fc.get("type", "")
+                step_data["is_site_bug"] = fc.get("is_site_bug", False)
+            steps_summary.append(step_data)
+
         return {
             "persona_id": p.get("id"),
             "name": p.get("name"),
@@ -236,38 +272,53 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             "task_completed": s.get("task_completed", False),
             "total_time_ms": s.get("total_time_ms", 0),
             "steps": steps_summary,
-            "findings": s.get("findings", [])[:10],
+            "findings": [f for f in s.get("findings", [])[:10] if f.get("is_site_bug", True)],
+            "tool_limitations_count": len(s.get("tool_limitations", [])),
             "form_test_results": s.get("form_test_results", [])[:10],
             "dead_ends": s.get("dead_ends", [])[:5],
             "errors": s.get("errors", [])[:5],
         }
 
-    # Build payload for LLM
+    # Build payload
     violations = crawl_data.get("accessibility_violations", [])
+    images = crawl_data.get("images", {})
+    if not isinstance(images, dict):
+        images = {"total": 0, "missing_alt": 0}
+
     payload = json.dumps({
         "base_score": base_score,
+        "url": crawl_data.get("url", ""),
         "crawl_summary": {
             "page_title": crawl_data.get("title", ""),
-            "load_time_ms": crawl_data.get("page_load_time_ms", 0),
+            "load_time_ms": crawl_data.get("page_load_time_ms") or 0,
             "links_count": len(crawl_data.get("links", [])),
             "forms_count": len(crawl_data.get("forms", [])),
             "buttons_count": len(crawl_data.get("buttons", [])),
-            "images_total": crawl_data.get("images", {}).get("total", 0) if isinstance(crawl_data.get("images"), dict) else 0,
-            "images_missing_alt": crawl_data.get("images", {}).get("missing_alt", 0) if isinstance(crawl_data.get("images"), dict) else 0,
+            "images_total": images.get("total", 0),
+            "images_missing_alt": images.get("missing_alt", 0),
             "seo": crawl_data.get("seo", {}),
+            "heading_hierarchy": crawl_data.get("heading_hierarchy", {}),
+            "focus_indicators": crawl_data.get("focus_indicators", {}),
+            "interactive_elements_count": crawl_data.get("interactive_elements_count", 0),
             "accessibility_violations": [{
                 "id": v.get("id"),
                 "impact": v.get("impact"),
                 "description": v.get("description"),
+                "help": v.get("help"),
                 "nodes_count": v.get("nodes_count"),
-            } for v in violations[:20]],
+            } for v in violations[:25]],
             "accessibility_violations_total": len(violations),
             "console_errors": crawl_data.get("console_errors", [])[:10],
         },
+        "tool_limitation_note": (
+            f"{len(tool_limitations)} findings were tool limitations (Playwright couldn't interact). "
+            f"{len(real_findings)} findings were real UX issues. "
+            "Score based on real findings only. NEVER score below 40 on tool_limitation alone."
+        ),
         "sessions": [_summarize_session(s) for s in sessions],
     }, default=str)
 
-    # Build stats for response
+    # Stats for response
     raw_stats = {
         "total": stats["total"],
         "completed": stats["completed"],
@@ -278,60 +329,71 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
         "fine_names": [s.get("persona", {}).get("name", "?") for s in stats["fine"]],
     }
 
+    # Build report shell
     report = {"score": {"overall": base_score}, "stats": raw_stats}
 
     try:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            report["error"] = "GEMINI_API_KEY not set — narrative skipped."
+            report["error"] = "GEMINI_API_KEY not set"
             return report
 
         client = genai.Client(api_key=api_key)
 
         prompt = (
-            SYSTEM_PROMPT
-            + "\n\nOUTPUT SCHEMA:\n" + REPORT_SCHEMA
-            + "\n\nTEST DATA:\n" + payload
+            f"REPORT SCHEMA:\n{REPORT_SCHEMA}\n\n"
+            f"TEST DATA:\n{payload}"
         )
 
+        # Gemini 3.1 Pro with thinking + structured JSON output
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.0-flash",
+            model=REPORT_MODEL,
             contents=prompt,
             config=GenerateContentConfig(
-                temperature=0.7,
-                max_output_tokens=4000,
+                system_instruction=GEMINI_REPORT_PROMPT,
+                response_mime_type="application/json",
+                thinking_config={"thinking_budget": 4096},
+                max_output_tokens=8000,
             ),
         )
 
         raw = response.text.strip()
+        # response_mime_type should give clean JSON, but strip fences just in case
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             if raw.endswith("```"):
                 raw = raw[:-3]
             raw = raw.strip()
+
         narrative = json.loads(raw)
 
-        # Override score with LLM's reasoned score if provided
+        # Map the new schema to our report structure
         if "overall_score" in narrative:
             report["score"]["overall"] = narrative["overall_score"]
             report["score"]["reasoning"] = narrative.get("score_reasoning", "")
-            report["score"]["confidence"] = narrative.get("confidence", 0.7)
+            report["score"]["confidence"] = narrative.get("confidence", "moderate")
 
-        # Store category scores
         if "category_scores" in narrative:
             report["category_scores"] = narrative["category_scores"]
 
-        # Store all narrative components
         report["narrative"] = {
-            "executive_summary": narrative.get("executive_summary", ""),
+            "executive_summary": narrative.get("thirty_second_summary", ""),
             "persona_verdicts": narrative.get("persona_verdicts", []),
-            "top_issues": narrative.get("top_issues", []),
-            "what_works": narrative.get("what_works", []),
-            "what_doesnt_work": narrative.get("what_doesnt_work", []),
-            "accessibility_audit": narrative.get("accessibility_audit", {}),
-            "chaos_test_summary": narrative.get("chaos_test_summary", {}),
+            "top_issues": narrative.get("whats_broken", []),
+            "what_works": narrative.get("whats_good", []),
+            "what_doesnt_work": narrative.get("whats_broken", []),
+            "accessibility_audit": {
+                "total_violations": len(violations),
+                "critical": sum(1 for v in violations if v.get("impact") == "critical"),
+                "serious": sum(1 for v in violations if v.get("impact") == "serious"),
+                "moderate": sum(1 for v in violations if v.get("impact") == "moderate"),
+                "minor_count": sum(1 for v in violations if v.get("impact") == "minor"),
+                "images_missing_alt": images.get("missing_alt", 0),
+                "details": [f"{v.get('id')}: {v.get('description', '')}" for v in violations[:10]],
+            },
             "recommendations": narrative.get("recommendations", []),
+            "testing_notes": narrative.get("testing_notes", {}),
         }
 
         # Attach screenshot references
@@ -352,9 +414,65 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             for s in sessions
         ]
 
-    except json.JSONDecodeError:
-        report["error"] = "LLM returned invalid JSON"
+    except json.JSONDecodeError as e:
+        report["error"] = f"LLM returned invalid JSON: {str(e)[:100]}"
+        report["narrative"] = _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations)
     except Exception:
         report["error"] = f"Gemini call failed: {traceback.format_exc()[:300]}"
+        report["narrative"] = _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations)
+
+    # Annotate the crawl screenshot with top findings
+    crawl_screenshot = crawl_data.get("screenshot_base64")
+    if crawl_screenshot and real_findings:
+        try:
+            all_findings_for_annotation = real_findings[:]
+            # Add axe violations as findings for annotation
+            for v in violations[:3]:
+                all_findings_for_annotation.append({
+                    "type": "problem",
+                    "title": v.get("id", "a11y violation"),
+                    "detail": v.get("description", v.get("help", "")),
+                    "is_site_bug": True,
+                })
+            annotated = await annotate_overview_screenshot(
+                crawl_screenshot,
+                all_findings_for_annotation,
+                page_url=crawl_data.get("url", ""),
+            )
+            report["annotated_screenshot_b64"] = annotated
+        except Exception as e:
+            print(f"Screenshot annotation failed: {e}")
+            report["annotated_screenshot_b64"] = crawl_screenshot
 
     return report
+
+
+def _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations):
+    """Template-based narrative when Gemini fails."""
+    completed = sum(1 for s in sessions if s.get("outcome") == "completed")
+    total = len(sessions)
+
+    return {
+        "executive_summary": (
+            f"Testing found {len(real_findings)} genuine issues across {total} persona sessions. "
+            f"{len(tool_limitations)} interactions could not be completed due to testing tool limitations. "
+            f"{completed}/{total} personas completed their tasks."
+        ),
+        "persona_verdicts": [],
+        "top_issues": [],
+        "what_works": [],
+        "what_doesnt_work": [],
+        "accessibility_audit": {},
+        "recommendations": [
+            {"rank": 1, "action": "Address accessibility violations from axe-core", "impact": "affects all screen reader users"},
+            {"rank": 2, "action": "Ensure all images have alt text", "impact": "affects ~15% of users"},
+            {"rank": 3, "action": "Increase small click targets to 44x44px", "impact": "affects ~10% of users"},
+        ],
+        "testing_notes": {
+            "total_personas": total,
+            "fully_tested": completed,
+            "partially_tested": total - completed,
+            "real_findings": len(real_findings),
+            "tool_limitations": len(tool_limitations),
+        },
+    }

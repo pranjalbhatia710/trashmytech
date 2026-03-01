@@ -1,16 +1,29 @@
-"""trashmy.tech — AI agent engine using Gemini for browser-based user testing."""
+"""trashmy.tech — AI agent engine with smart clicking and failure classification."""
 
 import json
 import asyncio
 import base64
-import io
 import os
 import random
 import time
 import traceback
 
-from PIL import Image
 from personas import ADVERSARIAL_INPUTS
+from browser_utils import (
+    wait_for_interactive,
+    build_interaction_map,
+    format_elements_for_llm,
+    smart_find,
+    smart_click,
+    smart_fill,
+    measure_element,
+    classify_click_failure,
+    capture_screenshot,
+    extract_page_state,
+    keyboard_navigate,
+    FailureType,
+    InteractiveElement,
+)
 
 # ---------------------------------------------------------------------------
 # System prompt template
@@ -35,10 +48,17 @@ persona would.
 Respond with ONLY valid JSON — no markdown fences, no extra text:
 {{
   "action": "click|type|scroll|back|tab|stuck|done",
-  "target": "visible element text, ARIA label, or CSS selector to interact with",
+  "target": "visible element text, ARIA label, index [N], or CSS selector",
   "value": "text to type (only for type action, otherwise empty string)",
   "reasoning": "one sentence from this persona's perspective explaining why"
 }}
+
+IMPORTANT TARGETING TIPS:
+- Prefer using the [N] index from the elements list for reliable targeting
+- If an element has an id, you can use #id
+- For links, use the exact visible text
+- For buttons, use the button text
+- For inputs, use name, placeholder, or aria-label
 
 ACTIONS:
 - click  — click on an element matching `target`
@@ -98,101 +118,10 @@ def _build_behavioral_rules(persona: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Page state extraction
-# ---------------------------------------------------------------------------
-
-async def _extract_page_state(page) -> dict:
-    try:
-        visible_text = await page.evaluate(
-            """() => {
-                const body = document.body;
-                if (!body) return '';
-                const walk = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null);
-                let text = '';
-                while (walk.nextNode()) {
-                    const t = walk.currentNode.textContent.trim();
-                    if (t) text += t + ' ';
-                }
-                return text.slice(0, 2000);
-            }"""
-        )
-    except Exception:
-        visible_text = ""
-
-    try:
-        elements = await page.evaluate(
-            """() => {
-                const selectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [tabindex]';
-                const els = Array.from(document.querySelectorAll(selectors));
-                return els.slice(0, 50).map((el, i) => {
-                    const rect = el.getBoundingClientRect();
-                    return {
-                        index: i,
-                        tag: el.tagName.toLowerCase(),
-                        type: el.getAttribute('type') || '',
-                        text: (el.innerText || '').trim().slice(0, 80),
-                        aria_label: el.getAttribute('aria-label') || '',
-                        placeholder: el.getAttribute('placeholder') || '',
-                        href: (el.getAttribute('href') || '').slice(0, 120),
-                        name: el.getAttribute('name') || '',
-                        id: el.id || '',
-                        width: Math.round(rect.width),
-                        height: Math.round(rect.height),
-                        x: Math.round(rect.x),
-                        y: Math.round(rect.y),
-                    };
-                });
-            }"""
-        )
-    except Exception:
-        elements = []
-
-    return {"visible_text": visible_text, "elements": elements}
-
-
-def _format_elements(elements: list[dict]) -> str:
-    lines = []
-    for el in elements:
-        parts = [f"[{el['index']}] <{el['tag']}>"]
-        if el.get("type"): parts.append(f'type="{el["type"]}"')
-        if el.get("text"): parts.append(f'text="{el["text"]}"')
-        if el.get("aria_label"): parts.append(f'aria-label="{el["aria_label"]}"')
-        if el.get("placeholder"): parts.append(f'placeholder="{el["placeholder"]}"')
-        if el.get("href"): parts.append(f'href="{el["href"]}"')
-        if el.get("name"): parts.append(f'name="{el["name"]}"')
-        if el.get("width") and el.get("height"):
-            parts.append(f'size={el["width"]}x{el["height"]}px')
-        lines.append(" ".join(parts))
-    return "\n".join(lines) if lines else "(no interactive elements found)"
-
-
-# ---------------------------------------------------------------------------
-# Screenshot capture
-# ---------------------------------------------------------------------------
-
-async def _capture_step_screenshot(page, width: int = 600, quality: int = 50) -> str | None:
-    """Capture current viewport as compressed JPEG base64."""
-    try:
-        raw_bytes = await page.screenshot(type="jpeg", quality=quality)
-        img = Image.open(io.BytesIO(raw_bytes))
-        original_w, original_h = img.size
-        if original_w > width:
-            ratio = width / original_w
-            new_h = max(1, int(original_h * ratio))
-            img = img.resize((width, new_h), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=quality)
-        return base64.b64encode(buf.getvalue()).decode("ascii")
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Gemini LLM call
 # ---------------------------------------------------------------------------
 
 async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
-    """Call Gemini and parse JSON response."""
     from google.genai.types import GenerateContentConfig
     try:
         full_prompt = system_prompt + "\n\n" + user_prompt
@@ -209,7 +138,6 @@ async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
             timeout=30,
         )
         raw = response.text.strip()
-        # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             if raw.endswith("```"):
@@ -225,109 +153,311 @@ async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Element finding + action execution
+# Visual overlay helpers (headed mode only)
 # ---------------------------------------------------------------------------
 
-async def _find_element(page, target: str, elements: list[dict]):
-    if not target:
-        return None
+_CURSOR_OVERLAY_JS = """\
+(function() {
+  if (document.getElementById('__tmt_cursor')) return;
+  const cur = document.createElement('div');
+  cur.id = '__tmt_cursor';
+  cur.style.cssText = `
+    position: fixed; z-index: 2147483647; pointer-events: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid rgba(239,68,68,0.9);
+    background: rgba(239,68,68,0.25);
+    transform: translate(-50%, -50%);
+    transition: left 0.25s cubic-bezier(.22,1,.36,1), top 0.25s cubic-bezier(.22,1,.36,1);
+    left: -50px; top: -50px;
+    box-shadow: 0 0 12px rgba(239,68,68,0.3);
+  `;
+  document.body.appendChild(cur);
+  const label = document.createElement('div');
+  label.id = '__tmt_label';
+  label.style.cssText = `
+    position: fixed; z-index: 2147483647; pointer-events: none;
+    font: bold 10px 'JetBrains Mono', monospace; color: #fff;
+    background: rgba(239,68,68,0.85); padding: 2px 6px; border-radius: 3px;
+    transform: translate(12px, -50%);
+    transition: left 0.25s cubic-bezier(.22,1,.36,1), top 0.25s cubic-bezier(.22,1,.36,1);
+    left: -200px; top: -200px; white-space: nowrap;
+  `;
+  document.body.appendChild(label);
+  document.addEventListener('mousemove', (e) => {
+    cur.style.left = e.clientX + 'px';
+    cur.style.top = e.clientY + 'px';
+    label.style.left = e.clientX + 'px';
+    label.style.top = e.clientY + 'px';
+  });
+})();
+"""
 
-    # Try by element index e.g. "[3]"
-    if target.startswith("[") and "]" in target:
-        try:
-            idx = int(target.split("]")[0][1:])
-            if 0 <= idx < len(elements):
-                el = elements[idx]
-                for attr in ("id", "name"):
-                    if el.get(attr):
-                        sel = f"#{el[attr]}" if attr == "id" else f"[name='{el[attr]}']"
-                        handle = await page.query_selector(sel)
-                        if handle:
-                            return handle
-        except (ValueError, IndexError):
-            pass
+_RIPPLE_JS = """\
+(function(x, y, color) {
+  const r = document.createElement('div');
+  r.style.cssText = `
+    position: fixed; z-index: 2147483646; pointer-events: none;
+    left: ${x}px; top: ${y}px;
+    width: 0; height: 0; border-radius: 50%;
+    background: ${color || 'rgba(239,68,68,0.4)'};
+    transform: translate(-50%, -50%);
+    animation: __tmt_ripple 0.5s ease-out forwards;
+  `;
+  if (!document.getElementById('__tmt_ripple_style')) {
+    const s = document.createElement('style');
+    s.id = '__tmt_ripple_style';
+    s.textContent = `@keyframes __tmt_ripple {
+      0% { width: 0; height: 0; opacity: 1; }
+      100% { width: 60px; height: 60px; opacity: 0; }
+    }`;
+    document.head.appendChild(s);
+  }
+  document.body.appendChild(r);
+  setTimeout(() => r.remove(), 600);
+})(%f, %f, '%s');
+"""
 
-    # Try by text, aria-label, placeholder, raw selector
-    for strategy in [
-        lambda: page.query_selector(f"text={target}"),
-        lambda: page.query_selector(f"[aria-label='{target}']"),
-        lambda: page.query_selector(f"[placeholder='{target}']"),
-        lambda: page.query_selector(target),
-    ]:
+_FAIL_FLASH_JS = """\
+(function(msg) {
+  const d = document.createElement('div');
+  d.style.cssText = `
+    position: fixed; z-index: 2147483647; pointer-events: none;
+    top: 16px; left: 50%%; transform: translateX(-50%%);
+    background: rgba(239,68,68,0.9); color: #fff;
+    font: bold 12px 'JetBrains Mono', monospace;
+    padding: 8px 20px; border-radius: 6px;
+    animation: __tmt_fail 1.2s ease-out forwards;
+    box-shadow: 0 4px 24px rgba(239,68,68,0.4);
+  `;
+  d.textContent = msg;
+  if (!document.getElementById('__tmt_fail_style')) {
+    const s = document.createElement('style');
+    s.id = '__tmt_fail_style';
+    s.textContent = `@keyframes __tmt_fail {
+      0%% { opacity: 0; transform: translateX(-50%%) translateY(-10px); }
+      15%% { opacity: 1; transform: translateX(-50%%) translateY(0); }
+      80%% { opacity: 1; }
+      100%% { opacity: 0; transform: translateX(-50%%) translateY(-10px); }
+    }`;
+    document.head.appendChild(s);
+  }
+  document.body.appendChild(d);
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed; inset: 0; z-index: 2147483645; pointer-events: none;
+    border: 3px solid rgba(239,68,68,0.7);
+    animation: __tmt_border_flash 0.6s ease-out forwards;
+  `;
+  if (!document.getElementById('__tmt_border_style')) {
+    const s = document.createElement('style');
+    s.id = '__tmt_border_style';
+    s.textContent = `@keyframes __tmt_border_flash {
+      0%% { opacity: 1; } 100%% { opacity: 0; }
+    }`;
+    document.head.appendChild(s);
+  }
+  document.body.appendChild(overlay);
+  setTimeout(() => { d.remove(); overlay.remove(); }, 1400);
+})('%s');
+"""
+
+
+async def _inject_overlays(page, headed: bool, persona: dict | None = None):
+    if not headed:
+        return
+    try:
+        already = await page.evaluate("!!document.getElementById('__tmt_cursor')")
+        if not already:
+            await page.evaluate(_CURSOR_OVERLAY_JS)
+    except Exception:
+        pass
+    if persona:
         try:
-            handle = await strategy()
-            if handle:
-                return handle
+            cat_colors = {
+                "accessibility": "#3b82f6", "chaos": "#ef4444",
+                "demographic": "#14b8a6", "behavioral": "#8b5cf6",
+            }
+            color = cat_colors.get(persona.get("category", ""), "#7a8099")
+            name = persona.get("name", "Agent").replace("'", "\\'")
+            cat = persona.get("category", "")
+            await page.evaluate(f"""(() => {{
+                if (document.getElementById('__tmt_badge')) return;
+                const b = document.createElement('div');
+                b.id = '__tmt_badge';
+                b.style.cssText = `
+                    position: fixed; z-index: 2147483647; pointer-events: none;
+                    bottom: 12px; right: 12px;
+                    font: bold 11px 'JetBrains Mono', monospace;
+                    color: #fff; background: {color};
+                    padding: 5px 12px; border-radius: 4px;
+                    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+                `;
+                b.textContent = 'trashmy.tech — {name} [{cat}]';
+                document.body.appendChild(b);
+            }})()""")
         except Exception:
             pass
 
-    # Fuzzy match
-    for el in elements:
-        for field in ("text", "aria_label", "placeholder"):
-            val = el.get(field, "")
-            if val and target.lower() in val.lower():
-                for attr in ("id", "name"):
-                    if el.get(attr):
-                        sel = f"#{el[attr]}" if attr == "id" else f"[name='{el[attr]}']"
-                        try:
-                            handle = await page.query_selector(sel)
-                            if handle:
-                                return handle
-                        except Exception:
-                            pass
 
-    return None
-
-
-async def _get_element_size(handle) -> dict:
-    """Get bounding box of an element."""
+async def _move_cursor_to(page, handle, headed: bool):
+    if not headed:
+        return
     try:
         box = await handle.bounding_box()
-        if box:
-            return {"width": round(box["width"]), "height": round(box["height"])}
+        if not box:
+            return
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        await page.evaluate(f"""(() => {{
+            const c = document.getElementById('__tmt_cursor');
+            const l = document.getElementById('__tmt_label');
+            if (c) {{ c.style.left = '{cx}px'; c.style.top = '{cy}px'; }}
+            if (l) {{ l.style.left = '{cx}px'; l.style.top = '{cy}px'; }}
+        }})()""")
+        await page.wait_for_timeout(250)
     except Exception:
         pass
-    return {"width": 0, "height": 0}
 
 
-async def _execute_action(page, decision: dict, persona: dict, elements: list[dict]) -> dict:
+async def _show_ripple(page, handle, headed: bool, color="rgba(239,68,68,0.4)"):
+    if not headed:
+        return
+    try:
+        box = await handle.bounding_box()
+        if not box:
+            return
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        await page.evaluate(_RIPPLE_JS % (cx, cy, color))
+    except Exception:
+        pass
+
+
+async def _show_fail(page, message: str, headed: bool):
+    if not headed:
+        return
+    try:
+        safe_msg = message.replace("'", "\\'").replace("\n", " ")[:60]
+        await page.evaluate(_FAIL_FLASH_JS % safe_msg)
+        await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Action execution with smart clicking
+# ---------------------------------------------------------------------------
+
+async def _execute_action(
+    page, decision: dict, persona: dict,
+    elements: list[InteractiveElement], headed: bool,
+) -> dict:
     action = decision.get("action", "stuck")
     target = decision.get("target", "")
     value = decision.get("value", "")
     mods = persona.get("behavioral_modifiers", {})
-    result = {"executed": True, "error": None, "target_size": {"width": 0, "height": 0}}
     click_delay = mods.get("click_delay_ms", 400) / 1000.0
+
+    result = {
+        "executed": True,
+        "error": None,
+        "target_size": {"width": 0, "height": 0},
+        "failure_classification": None,
+        "click_strategy": None,
+    }
 
     try:
         if action == "click":
-            handle = await _find_element(page, target, elements)
+            handle = await smart_find(page, target, elements)
             if handle:
-                result["target_size"] = await _get_element_size(handle)
+                size = await measure_element(handle)
+                result["target_size"] = {"width": size["width"], "height": size["height"]}
+
+                await _move_cursor_to(page, handle, headed)
                 await asyncio.sleep(click_delay)
+                await _show_ripple(page, handle, headed)
+
                 if mods.get("double_clicks"):
-                    await handle.dblclick(timeout=5000)
+                    try:
+                        await handle.dblclick(timeout=5000)
+                        result["click_strategy"] = "double_click"
+                    except Exception:
+                        # Fall through to smart_click
+                        click_result = await smart_click(page, handle)
+                        result["click_strategy"] = click_result.strategy_used
+                        if not click_result.success:
+                            classification = classify_click_failure(click_result, target, None)
+                            result["failure_classification"] = classification
+                            if classification.get("is_site_bug"):
+                                result["executed"] = False
+                                result["error"] = classification.get("reason", "Click failed")
+                            else:
+                                # Tool limitation — mark as executed (not a site bug)
+                                result["tool_limitation"] = True
+                                result["error"] = classification.get("reason", "")
                 else:
-                    await handle.click(timeout=5000)
+                    click_result = await smart_click(page, handle)
+                    result["click_strategy"] = click_result.strategy_used
+                    if not click_result.success:
+                        classification = classify_click_failure(click_result, target, None)
+                        result["failure_classification"] = classification
+                        if classification.get("is_site_bug"):
+                            result["executed"] = False
+                            result["error"] = classification.get("reason", "Click failed")
+                            await _show_fail(page, classification.get("reason", "Click failed"), headed)
+                        else:
+                            result["tool_limitation"] = True
+                            result["error"] = classification.get("reason", "")
             else:
                 result["executed"] = False
                 result["error"] = f"Element not found: {target}"
+                # Can't find element — this is almost always our tool's problem,
+                # not the site's. LLM asked to click something we can't locate.
+                result["tool_limitation"] = True
+                result["failure_classification"] = {
+                    "type": FailureType.TOOL_LIMITATION.value,
+                    "is_site_bug": False,
+                    "reason": f"Could not locate element matching '{target}'",
+                }
+                await _show_fail(page, f"Not found: {target[:40]}", headed)
 
         elif action == "type":
-            handle = await _find_element(page, target, elements)
+            handle = await smart_find(page, target, elements)
             if handle:
-                result["target_size"] = await _get_element_size(handle)
+                size = await measure_element(handle)
+                result["target_size"] = {"width": size["width"], "height": size["height"]}
+
+                await _move_cursor_to(page, handle, headed)
                 await asyncio.sleep(click_delay)
-                await handle.click(timeout=5000)
+
                 if mods.get("input_strategy") == "adversarial":
                     value = random.choice(ADVERSARIAL_INPUTS)
                     result["adversarial_input"] = value
-                await handle.fill(value, timeout=5000)
+
+                await _show_ripple(page, handle, headed, color="rgba(59,130,246,0.5)")
+                fill_result = await smart_fill(page, handle, value)
+                if not fill_result["success"]:
+                    result["executed"] = False
+                    result["error"] = fill_result.get("error", "Could not fill input")
+                    result["failure_classification"] = {
+                        "type": FailureType.TOOL_LIMITATION.value,
+                        "is_site_bug": False,
+                        "reason": "Could not fill input — likely a custom component",
+                    }
+                    await _show_fail(page, "Can't fill input", headed)
             else:
                 result["executed"] = False
                 result["error"] = f"Input not found: {target}"
+                result["tool_limitation"] = True
+                result["failure_classification"] = {
+                    "type": FailureType.TOOL_LIMITATION.value,
+                    "is_site_bug": False,
+                    "reason": f"Input element '{target}' not found",
+                }
+                await _show_fail(page, f"Input not found: {target[:40]}", headed)
 
         elif action == "scroll":
-            direction = -300 if target.lower() == "up" else 300
+            direction = -400 if target.lower() == "up" else 400
             await page.evaluate(f"window.scrollBy(0, {direction})")
             await asyncio.sleep(0.3)
 
@@ -336,11 +466,21 @@ async def _execute_action(page, decision: dict, persona: dict, elements: list[di
             await asyncio.sleep(0.5)
 
         elif action == "tab":
-            await page.keyboard.press("Tab")
-            await asyncio.sleep(0.2)
+            nav_result = await keyboard_navigate(page)
+            if nav_result.get("focused_element"):
+                fe = nav_result["focused_element"]
+                if not fe.get("has_focus_style"):
+                    result["finding"] = {
+                        "type": "minor",
+                        "category": "accessibility",
+                        "title": "Missing focus indicator",
+                        "detail": f"Element <{fe.get('tag', '?')}> '{fe.get('text', '')[:30]}' has no visible focus style",
+                    }
 
         elif action in ("stuck", "done"):
-            pass
+            if headed and action == "stuck":
+                await _show_fail(page, "STUCK — can't proceed", headed)
+
         else:
             result["executed"] = False
             result["error"] = f"Unknown action: {action}"
@@ -348,6 +488,13 @@ async def _execute_action(page, decision: dict, persona: dict, elements: list[di
     except Exception as e:
         result["executed"] = False
         result["error"] = str(e)[:200]
+        # Classify unexpected errors as tool limitations
+        result["failure_classification"] = {
+            "type": FailureType.TOOL_LIMITATION.value,
+            "is_site_bug": False,
+            "reason": f"Unexpected error: {str(e)[:150]}",
+        }
+        await _show_fail(page, str(e)[:60], headed)
 
     return result
 
@@ -365,8 +512,10 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
     dead_ends: list[str] = []
     all_errors: list[str] = []
     form_test_results: list[dict] = []
+    tool_limitations: list[dict] = []
     task_completed = False
     final_url = url
+    headed = os.getenv("HEADLESS", "true").lower() == "false"
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         name=persona.get("name", "Unknown"),
@@ -381,7 +530,10 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
     try:
         pw = await async_playwright().start()
         viewport = persona.get("viewport", {"width": 1280, "height": 720})
-        browser = await pw.chromium.launch(headless=True)
+        browser = await pw.chromium.launch(
+            headless=not headed,
+            slow_mo=150 if headed else 0,
+        )
         context = await browser.new_context(
             viewport=viewport,
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -399,29 +551,37 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
         # Navigate
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(1500)
+            await wait_for_interactive(page, timeout_ms=8000)
+            await _inject_overlays(page, headed, persona)
         except Exception as e:
             all_errors.append(f"Navigation failed: {str(e)[:200]}")
-            return _make_result(persona, steps, all_errors, dead_ends, findings, form_test_results, False, session_start, url, 0)
+            return _make_result(persona, steps, all_errors, dead_ends, findings,
+                              form_test_results, tool_limitations, False, session_start, url, 0)
 
-        # Agent loop — up to 10 steps
-        for step_num in range(10):
-            state = await _extract_page_state(page)
+        # Agent loop — up to 12 steps
+        max_steps = 12
+        for step_num in range(max_steps):
+            await _inject_overlays(page, headed, persona)
+
+            # Build interaction map (much richer than old element extraction)
+            elements = await build_interaction_map(page)
+            page_state = await extract_page_state(page)
 
             user_prompt = (
                 f"CURRENT URL: {page.url}\n\n"
-                f"VISIBLE TEXT:\n{state['visible_text']}\n\n"
-                f"INTERACTIVE ELEMENTS:\n{_format_elements(state['elements'])}\n\n"
-                f"Step {step_num + 1} of 10. What do you do next?"
+                f"VISIBLE TEXT:\n{page_state['visible_text']}\n\n"
+                f"INTERACTIVE ELEMENTS:\n{format_elements_for_llm(elements)}\n\n"
+                f"Step {step_num + 1} of {max_steps}. What do you do next?"
             )
 
             decision = await _ask_llm(model, system_prompt, user_prompt)
 
             # Capture screenshot before action
-            screenshot_b64 = await _capture_step_screenshot(page)
+            screenshot_bytes = await capture_screenshot(page)
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("ascii") if screenshot_bytes else None
 
-            # Execute action
-            exec_result = await _execute_action(page, decision, persona, state["elements"])
+            # Execute action with smart clicking
+            exec_result = await _execute_action(page, decision, persona, elements, headed)
 
             step_record = {
                 "step_number": step_num + 1,
@@ -431,6 +591,8 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
                 "reasoning": decision.get("reasoning", ""),
                 "target_size_px": exec_result.get("target_size", {"width": 0, "height": 0}),
                 "result": "success" if exec_result["executed"] else exec_result.get("error", "failed"),
+                "click_strategy": exec_result.get("click_strategy"),
+                "failure_classification": exec_result.get("failure_classification"),
                 "page_url_after": page.url,
                 "screenshot_b64": screenshot_b64,
                 "timestamp_ms": int((time.time() - session_start) * 1000),
@@ -441,6 +603,15 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
             network_errors.clear()
 
             steps.append(step_record)
+
+            # Track tool limitations separately
+            if exec_result.get("tool_limitation"):
+                tool_limitations.append({
+                    "step": step_num + 1,
+                    "target": decision.get("target", ""),
+                    "reason": exec_result.get("error", ""),
+                    "strategy_attempts": exec_result.get("click_strategy", ""),
+                })
 
             # Track form test results for chaos agents
             if exec_result.get("adversarial_input") and decision.get("action") == "type":
@@ -453,23 +624,38 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
                     "error_message": exec_result.get("error", ""),
                 })
 
-            # Generate findings
-            if exec_result.get("error"):
+            # Generate findings — only for genuine UX issues, NOT tool limitations
+            classification = exec_result.get("failure_classification")
+            is_tool_limitation = (
+                exec_result.get("tool_limitation") or
+                (classification and classification.get("type") == FailureType.TOOL_LIMITATION.value)
+            )
+
+            if exec_result.get("error") and not is_tool_limitation:
                 all_errors.append(f"Step {step_num + 1}: {exec_result['error']}")
 
-            if not exec_result["executed"] and decision["action"] not in ("stuck", "done"):
+            if not exec_result["executed"] and not is_tool_limitation and decision["action"] not in ("stuck", "done"):
                 dead_ends.append(f"Step {step_num + 1}: Could not {decision['action']} '{decision.get('target', '')}'")
                 findings.append({
                     "type": "major",
                     "category": "usability",
                     "title": f"Could not {decision['action']} target element",
-                    "detail": f"{persona['name']} tried to {decision['action']} '{decision.get('target', '')}' but the element was not found or not interactable.",
+                    "detail": f"{persona['name']} tried to {decision['action']} '{decision.get('target', '')}' but the element was not interactable. {classification.get('reason', '') if classification else ''}",
                     "evidence_step": step_num + 1,
-                    "measured_value": "element not found",
+                    "measured_value": classification.get("reason", "element not interactable") if classification else "element not found",
                     "expected_value": "element should be interactable",
+                    "is_site_bug": True,
                 })
 
-            # Check for small click targets
+            # Check for tab finding (focus indicators)
+            if exec_result.get("finding"):
+                findings.append({
+                    **exec_result["finding"],
+                    "evidence_step": step_num + 1,
+                    "is_site_bug": True,
+                })
+
+            # Check for small click targets — genuine UX issue
             size = exec_result.get("target_size", {})
             if decision["action"] == "click" and exec_result["executed"]:
                 w, h = size.get("width", 0), size.get("height", 0)
@@ -482,10 +668,11 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
                         "evidence_step": step_num + 1,
                         "measured_value": f"{w}x{h}px",
                         "expected_value": "44x44px minimum",
+                        "is_site_bug": True,
                     })
 
             try:
-                await page.wait_for_timeout(800)
+                await page.wait_for_timeout(600)
             except Exception:
                 pass
 
@@ -502,6 +689,7 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
                     "evidence_step": step_num + 1,
                     "measured_value": "blocked",
                     "expected_value": "clear path forward",
+                    "is_site_bug": True,
                 })
                 break
 
@@ -517,7 +705,9 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
             if pw: await pw.stop()
         except Exception: pass
 
-    return _make_result(persona, steps, all_errors, dead_ends, findings, form_test_results, task_completed, session_start, final_url, len(steps))
+    return _make_result(persona, steps, all_errors, dead_ends, findings,
+                       form_test_results, tool_limitations, task_completed,
+                       session_start, final_url, len(steps))
 
 
 def _classify_adversarial(input_val: str) -> str:
@@ -536,10 +726,13 @@ def _classify_adversarial(input_val: str) -> str:
     return "other"
 
 
-def _make_result(persona, steps, errors, dead_ends, findings, form_test_results, completed, start_time, final_url, step_count):
+def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
+                 tool_limitations, completed, start_time, final_url, step_count):
     time_spent = int((time.time() - start_time) * 1000)
 
-    # Determine outcome
+    # Filter findings to only genuine site bugs
+    real_findings = [f for f in findings if f.get("is_site_bug", True)]
+
     if completed:
         outcome = "completed"
     elif dead_ends:
@@ -562,41 +755,38 @@ def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
         "outcome": outcome,
         "total_time_ms": time_spent,
         "steps": steps,
-        "findings": findings,
+        "findings": real_findings,
         "form_test_results": form_test_results,
+        "tool_limitations": tool_limitations,
         "errors": errors,
         "dead_ends": dead_ends,
         "final_url": final_url,
         "steps_taken": step_count,
-        "issues_found": len(findings),
+        "issues_found": len(real_findings),
+        "tool_limitation_count": len(tool_limitations),
     }
 
 
 # ---------------------------------------------------------------------------
-# Local execution (no Modal)
+# Local execution
 # ---------------------------------------------------------------------------
 
 async def run_agent_local(url: str, persona: dict, site_context: dict) -> dict:
-    """Run a single persona test locally using Gemini."""
     from google import genai
-
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], False, time.time(), url, 0)
-
+        return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
     client = genai.Client(api_key=api_key)
     return await _agent_loop(url, persona, site_context, client)
 
 
 async def run_swarm_local(url: str, personas: list[dict], site_context: dict) -> list[dict]:
-    """Run all persona tests concurrently."""
     tasks = [run_agent_local(url, persona, site_context) for persona in personas]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-
     final = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            final.append(_make_result(personas[i], [], [f"Agent exception: {str(result)[:300]}"], [], [], [], False, time.time(), url, 0))
+            final.append(_make_result(personas[i], [], [f"Agent exception: {str(result)[:300]}"], [], [], [], [], False, time.time(), url, 0))
         else:
             final.append(result)
     return final
@@ -617,7 +807,6 @@ if __name__ == "__main__":
 
     print(f"Testing {test_url} as {test_persona['name']}...")
     result = asyncio.run(run_agent_local(test_url, test_persona, {}))
-    # Don't print screenshots
     for step in result.get("steps", []):
         step.pop("screenshot_b64", None)
     print(json.dumps(result, indent=2, default=str))

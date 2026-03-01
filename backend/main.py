@@ -166,6 +166,22 @@ async def get_screenshot(test_id: str, persona_id: str, step: int):
     return Response(content=base64.b64decode(b64), media_type="image/jpeg")
 
 
+@app.get("/v1/tests/{test_id}/annotated-screenshot")
+async def get_annotated_screenshot(test_id: str):
+    test = tests_store.get(test_id)
+    if not test:
+        return _error_response("not_found", f"Test '{test_id}' not found.", 404)
+    report = test.get("report")
+    if not report:
+        return _error_response("not_found", "Report not ready.", 404)
+    b64 = report.get("annotated_screenshot_b64")
+    if not b64:
+        return _error_response("not_found", "No annotated screenshot available.", 404)
+    import base64
+    from fastapi.responses import Response
+    return Response(content=base64.b64decode(b64), media_type="image/jpeg")
+
+
 # ---------------------------------------------------------------------------
 # WebSocket — real-time pipeline
 # ---------------------------------------------------------------------------
@@ -298,6 +314,8 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     "result": step.get("result", "")[:80],
                     "target_size": step.get("target_size_px"),
                     "timestamp_ms": step.get("timestamp_ms"),
+                    "click_strategy": step.get("click_strategy"),
+                    "failure_classification": step.get("failure_classification"),
                 })
 
             await websocket.send_json({
@@ -309,6 +327,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                 "outcome": result.get("outcome", "struggled"),
                 "total_time_ms": result.get("total_time_ms", 0),
                 "issues_found": result.get("issues_found", 0),
+                "tool_limitation_count": result.get("tool_limitation_count", 0),
                 "steps": step_summaries,
                 "findings": result.get("findings", [])[:10],
             })
@@ -326,6 +345,10 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         # Extract screenshots from report, store separately, replace with URLs
         screenshots_store[test_id] = {}
         ws_report = json.loads(json.dumps(report, default=str))  # deep copy
+        # Remove large annotated screenshot from WS payload — serve via REST
+        if "annotated_screenshot_b64" in ws_report:
+            ws_report.pop("annotated_screenshot_b64")
+            ws_report["annotated_screenshot_url"] = f"/v1/tests/{test_id}/annotated-screenshot"
         for session in ws_report.get("sessions_summary", []):
             pid = session.get("persona_id", "")
             for ss in session.get("screenshots", []):

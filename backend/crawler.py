@@ -1,10 +1,9 @@
 """
 crawler.py — Async website crawler for trashmy.tech
 
-Launches headless Chromium via Playwright, captures page metadata, structure,
-accessibility violations (axe-core), and a resized screenshot. Designed to
-never crash: every section is individually guarded so partial results are
-always returned.
+Uses browser_utils for robust page readiness and axe-core integration.
+Launches Chromium via Playwright, captures page metadata, structure,
+accessibility violations, and a resized screenshot. Never crashes.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import os
 import time
 import traceback
 from typing import Any
@@ -20,33 +20,25 @@ from urllib.parse import urljoin
 from PIL import Image
 from playwright.async_api import async_playwright, Page, Error as PlaywrightError
 
-# ---------------------------------------------------------------------------
-# Axe-core CDN URL (pinned version for reproducibility)
-# ---------------------------------------------------------------------------
-AXE_CDN_URL = "https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.9.1/axe.min.js"
+from browser_utils import (
+    wait_for_interactive,
+    inject_axe_and_audit,
+    build_interaction_map,
+)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 async def _safe(coro, default=None):
-    """Await *coro* and swallow any exception, returning *default* instead."""
     try:
         return await coro
     except Exception:
         return default
 
 
-def _safe_sync(fn, default=None):
-    """Call *fn()* synchronously and swallow any exception."""
-    try:
-        return fn()
-    except Exception:
-        return default
-
-
 async def _collect_links(page: Page, base_url: str, max_links: int = 30) -> list[dict]:
-    """Return up to *max_links* anchor elements with href and text."""
     try:
         raw = await page.evaluate(
             """(maxLinks) => {
@@ -58,7 +50,6 @@ async def _collect_links(page: Page, base_url: str, max_links: int = 30) -> list
             }""",
             max_links,
         )
-        # Resolve relative URLs on the Python side as a safety net
         for link in raw:
             if link.get("href") and not link["href"].startswith(("http://", "https://", "mailto:", "tel:")):
                 link["href"] = urljoin(base_url, link["href"])
@@ -68,7 +59,6 @@ async def _collect_links(page: Page, base_url: str, max_links: int = 30) -> list
 
 
 async def _collect_forms(page: Page) -> list[dict]:
-    """Return every <form> with its fields (inputs, selects, textareas)."""
     try:
         return await page.evaluate(
             """() => {
@@ -96,7 +86,6 @@ async def _collect_forms(page: Page) -> list[dict]:
 
 
 async def _collect_buttons(page: Page) -> list[dict]:
-    """Return every <button> and <input type="submit|button|reset">."""
     try:
         return await page.evaluate(
             """() => {
@@ -113,7 +102,6 @@ async def _collect_buttons(page: Page) -> list[dict]:
 
 
 async def _collect_images(page: Page) -> dict:
-    """Return total image count and how many are missing alt text."""
     try:
         return await page.evaluate(
             """() => {
@@ -127,83 +115,93 @@ async def _collect_images(page: Page) -> dict:
 
 
 async def _check_seo(page: Page) -> dict:
-    """Check for h1, meta description, and viewport meta tag."""
     try:
         return await page.evaluate(
             """() => {
                 const h1 = document.querySelector('h1');
                 const metaDesc = document.querySelector('meta[name="description"]');
                 const viewport = document.querySelector('meta[name="viewport"]');
+                const lang = document.documentElement.getAttribute('lang');
+                const canonical = document.querySelector('link[rel="canonical"]');
                 return {
                     has_h1: !!h1,
                     h1_text: h1 ? h1.innerText.trim().substring(0, 300) : null,
                     has_meta_description: !!metaDesc,
                     meta_description: metaDesc ? metaDesc.getAttribute('content') : null,
-                    has_viewport: !!viewport
+                    has_viewport: !!viewport,
+                    has_lang: !!lang,
+                    lang: lang || null,
+                    has_canonical: !!canonical,
                 };
             }"""
         )
     except Exception:
         return {
-            "has_h1": False,
-            "h1_text": None,
-            "has_meta_description": False,
-            "meta_description": None,
-            "has_viewport": False,
+            "has_h1": False, "h1_text": None,
+            "has_meta_description": False, "meta_description": None,
+            "has_viewport": False, "has_lang": False, "lang": None,
+            "has_canonical": False,
         }
 
 
-async def _run_axe(page: Page) -> list[dict]:
-    """Inject axe-core from CDN and return accessibility violations."""
+async def _check_heading_hierarchy(page: Page) -> dict:
+    """Check heading structure for accessibility."""
     try:
-        # Inject axe-core
-        await page.evaluate(
-            """async (cdnUrl) => {
-                if (typeof axe !== 'undefined') return;
-                await new Promise((resolve, reject) => {
-                    const s = document.createElement('script');
-                    s.src = cdnUrl;
-                    s.onload = resolve;
-                    s.onerror = reject;
-                    document.head.appendChild(s);
-                });
-            }""",
-            AXE_CDN_URL,
-        )
-        # Small grace period for script initialization
-        await asyncio.sleep(0.3)
-
-        results = await page.evaluate(
-            """async () => {
-                const results = await axe.run();
-                return results.violations.map(v => ({
-                    id: v.id,
-                    impact: v.impact,
-                    description: v.description,
-                    help: v.help,
-                    helpUrl: v.helpUrl,
-                    nodes_count: v.nodes.length
-                }));
-            }"""
-        )
-        return results
+        return await page.evaluate("""() => {
+            const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+            const levels = headings.map(h => parseInt(h.tagName[1]));
+            const skips = [];
+            for (let i = 1; i < levels.length; i++) {
+                if (levels[i] - levels[i-1] > 1) {
+                    skips.push({ from: 'h' + levels[i-1], to: 'h' + levels[i] });
+                }
+            }
+            return {
+                total_headings: headings.length,
+                h1_count: levels.filter(l => l === 1).length,
+                levels: levels,
+                skips: skips,
+                has_skip_nav: !!document.querySelector('a[href="#main"], a[href="#content"], [class*="skip"]'),
+            };
+        }""")
     except Exception:
-        return []
+        return {"total_headings": 0, "h1_count": 0, "levels": [], "skips": [], "has_skip_nav": False}
+
+
+async def _check_focus_indicators(page: Page) -> dict:
+    """Check if interactive elements have visible focus styles."""
+    try:
+        return await page.evaluate("""() => {
+            const interactive = Array.from(document.querySelectorAll(
+                'a, button, input, textarea, select, [tabindex]'
+            )).slice(0, 20);
+            let withOutline = 0;
+            let withoutOutline = 0;
+            for (const el of interactive) {
+                const cs = window.getComputedStyle(el, ':focus');
+                const outline = cs.outlineStyle;
+                if (outline && outline !== 'none') withOutline++;
+                else withoutOutline++;
+            }
+            return {
+                total_checked: interactive.length,
+                with_focus_style: withOutline,
+                without_focus_style: withoutOutline,
+            };
+        }""")
+    except Exception:
+        return {"total_checked": 0, "with_focus_style": 0, "without_focus_style": 0}
 
 
 async def _capture_screenshot_b64(page: Page, width: int = 800) -> str | None:
-    """Take a full-page screenshot, resize to *width* px wide, return base64."""
     try:
         raw_bytes = await page.screenshot(full_page=True, type="png")
         img = Image.open(io.BytesIO(raw_bytes))
-
-        # Resize proportionally
         original_w, original_h = img.size
         if original_w > 0:
             ratio = width / original_w
             new_h = max(1, int(original_h * ratio))
             img = img.resize((width, new_h), Image.LANCZOS)
-
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
         return base64.b64encode(buf.getvalue()).decode("ascii")
@@ -216,13 +214,7 @@ async def _capture_screenshot_b64(page: Page, width: int = 800) -> str | None:
 # ---------------------------------------------------------------------------
 
 async def crawl_site(url: str) -> dict:
-    """
-    Crawl *url* with headless Chromium and return a structured dict of results.
-
-    The function **never raises**. If a subsystem fails, its key will contain
-    a sensible default (empty list, None, etc.) and the ``errors`` list will
-    describe what went wrong.
-    """
+    """Crawl *url* with Chromium and return structured results. Never raises."""
     result: dict[str, Any] = {
         "url": url,
         "success": False,
@@ -232,13 +224,14 @@ async def crawl_site(url: str) -> dict:
         "buttons": [],
         "images": {"total": 0, "missing_alt": 0},
         "seo": {
-            "has_h1": False,
-            "h1_text": None,
-            "has_meta_description": False,
-            "meta_description": None,
+            "has_h1": False, "h1_text": None,
+            "has_meta_description": False, "meta_description": None,
             "has_viewport": False,
         },
         "accessibility_violations": [],
+        "heading_hierarchy": {},
+        "focus_indicators": {},
+        "interactive_elements_count": 0,
         "console_errors": [],
         "page_load_time_ms": None,
         "screenshot_base64": None,
@@ -255,7 +248,8 @@ async def crawl_site(url: str) -> dict:
         return result
 
     try:
-        browser = await playwright.chromium.launch(headless=True)
+        headless = os.getenv("HEADLESS", "true").lower() != "false"
+        browser = await playwright.chromium.launch(headless=headless)
     except Exception as exc:
         result["errors"].append(f"Failed to launch browser: {exc}")
         await _safe(playwright.stop())
@@ -273,48 +267,49 @@ async def crawl_site(url: str) -> dict:
         )
         page = await context.new_page()
 
-        # ---- Collect console errors ----
+        # Console errors
         console_errors: list[str] = []
-
         def _on_console(msg):
             if msg.type == "error":
                 console_errors.append(msg.text[:500])
-
         page.on("console", _on_console)
 
-        # ---- Navigate ----
+        # Navigate — use networkidle for JS-heavy sites like Apple.com
         load_start = time.perf_counter()
         try:
-            await page.goto(url, timeout=15_000, wait_until="domcontentloaded")
+            await page.goto(url, timeout=30_000, wait_until="networkidle")
         except PlaywrightError as exc:
-            # Timeout or net error — we still try to extract whatever loaded
+            # Timeout or net error — still try to extract what loaded
             result["errors"].append(f"Navigation issue: {exc}")
+            # Try domcontentloaded as fallback
+            try:
+                await page.goto(url, timeout=15_000, wait_until="domcontentloaded")
+            except Exception:
+                pass
         load_end = time.perf_counter()
         result["page_load_time_ms"] = round((load_end - load_start) * 1000)
 
-        # Brief wait for any late JS to settle
-        await _safe(page.wait_for_load_state("networkidle", timeout=5_000))
+        # Wait for page to be truly interactive
+        await wait_for_interactive(page, timeout_ms=10000)
 
-        # ---- Title ----
+        # Title
         result["title"] = await _safe(page.title(), default=None)
 
-        # ---- Parallel data collection ----
+        # Parallel data collection
         (
-            links,
-            forms,
-            buttons,
-            images,
-            seo,
-            axe_violations,
-            screenshot,
+            links, forms, buttons, images, seo, axe_result,
+            headings, focus, screenshot, interaction_map,
         ) = await asyncio.gather(
             _collect_links(page, url),
             _collect_forms(page),
             _collect_buttons(page),
             _collect_images(page),
             _check_seo(page),
-            _run_axe(page),
+            inject_axe_and_audit(page),
+            _check_heading_hierarchy(page),
+            _check_focus_indicators(page),
             _capture_screenshot_b64(page),
+            build_interaction_map(page),
         )
 
         result["links"] = links
@@ -322,7 +317,10 @@ async def crawl_site(url: str) -> dict:
         result["buttons"] = buttons
         result["images"] = images
         result["seo"] = seo
-        result["accessibility_violations"] = axe_violations
+        result["accessibility_violations"] = axe_result.get("violations", [])
+        result["heading_hierarchy"] = headings
+        result["focus_indicators"] = focus
+        result["interactive_elements_count"] = len(interaction_map)
         result["screenshot_base64"] = screenshot
         result["console_errors"] = console_errors
         result["success"] = True
@@ -330,7 +328,6 @@ async def crawl_site(url: str) -> dict:
     except Exception as exc:
         result["errors"].append(f"Crawl error: {traceback.format_exc()}")
     finally:
-        # Always tear down browser resources
         if browser:
             await _safe(browser.close())
         if playwright:
@@ -340,7 +337,7 @@ async def crawl_site(url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CLI convenience — ``python crawler.py https://example.com``
+# CLI
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import json
@@ -350,7 +347,6 @@ if __name__ == "__main__":
 
     async def _main():
         data = await crawl_site(target)
-        # Truncate screenshot for terminal readability
         if data.get("screenshot_base64"):
             data["screenshot_base64"] = data["screenshot_base64"][:80] + "...(truncated)"
         print(json.dumps(data, indent=2, ensure_ascii=False))

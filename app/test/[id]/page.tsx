@@ -4,6 +4,22 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useSearchParams } from "next/navigation";
 import { API_URL, WS_URL } from "@/lib/config";
+import { useScene } from "@/components/three/SceneContext";
+import CounterLoader from "@/components/ui/counter-loader";
+import { ScoreCard } from "@/components/ui/score-card";
+import { SparkLine } from "@/components/ui/spark-line";
+import { StatsCard } from "@/components/ui/stats-card";
+import { ReportFolder } from "@/components/ui/report-folder";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Shield, Eye, Smartphone, Gauge, Users, AlertTriangle,
+  CheckCircle2, XCircle, ChevronDown, ExternalLink, Copy, Printer,
+} from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────
 type Phase = "connecting" | "crawling" | "swarming" | "reporting" | "done";
@@ -67,9 +83,11 @@ interface CategoryScore {
 interface PersonaVerdict {
   persona_id: string;
   persona_name: string;
+  name?: string;
   would_recommend: boolean;
   narrative: string;
   outcome: string;
+  category?: string;
   primary_barrier: string | null;
 }
 
@@ -118,7 +136,7 @@ interface Report {
       server_errors?: number;
       worst_finding?: string;
     };
-    recommendations?: string[];
+    recommendations?: Array<string | { rank: number; action: string; impact: string }>;
   };
   sessions_summary?: Array<{
     persona_id: string;
@@ -137,14 +155,15 @@ function timestamp() {
 function catColor(cat: string) {
   switch (cat) {
     case "accessibility": return "#3b82f6";
-    case "chaos": return "#6b7280";
+    case "chaos": return "#ef4444";
     case "demographic": return "#14b8a6";
     case "behavioral": return "#8b5cf6";
     default: return "#4a506a";
   }
 }
 
-function initials(name: string) {
+function initials(name: string | undefined) {
+  if (!name) return "??";
   return name.replace(/[^A-Za-z ]/g, "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
@@ -162,6 +181,23 @@ function severityColor(s: string) {
     default: return "#3b82f6";
   }
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const CAT_ICONS: Record<string, any> = {
+  accessibility: Eye,
+  security: Shield,
+  usability: Users,
+  mobile: Smartphone,
+  performance: Gauge,
+};
+
+const CAT_COLORS: Record<string, string> = {
+  accessibility: "#3b82f6",
+  security: "#ef4444",
+  usability: "#8b5cf6",
+  mobile: "#14b8a6",
+  performance: "#eab308",
+};
 
 // ── Component ──────────────────────────────────────────────────
 export default function TestPage() {
@@ -182,9 +218,20 @@ export default function TestPage() {
   const [animatedScore, setAnimatedScore] = useState(0);
   const [expandedPersona, setExpandedPersona] = useState<string | null>(null);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const logRef = useRef<HTMLDivElement>(null);
   const startTime = useRef(Date.now());
+
+  // Sync with 3D scene context
+  const scene = useScene();
+  useEffect(() => { scene.setPhase(phase); }, [phase, scene]);
+  useEffect(() => {
+    if (report?.score?.overall) scene.setScore(report.score.overall);
+  }, [report, scene]);
+  useEffect(() => {
+    scene.setAgentProgress(agents.size, doneCount);
+  }, [agents.size, doneCount, scene]);
 
   const addLog = useCallback((level: LogEntry["level"], message: string) => {
     setLogs((prev) => [{ time: timestamp(), level, message }, ...prev]);
@@ -346,369 +393,618 @@ export default function TestPage() {
     return (order[a.status] ?? 5) - (order[b.status] ?? 5);
   });
 
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+  const handleCopy = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── RENDER ────────────────────────────────────────────────
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#08090d" }}>
       {/* Header */}
-      <header className="border-b px-6 py-3 flex items-center justify-between sticky top-0 z-50" style={{ borderColor: "#252a3a", backgroundColor: "#08090d" }}>
-        <a href="/" className="font-mono text-sm" style={{ color: "#7a8099" }}>trashmy.tech</a>
-        <div className="flex items-center gap-4 font-mono text-xs">
-          <span className="truncate max-w-[280px]" style={{ color: "#4a506a" }}>{testUrl}</span>
-          <span style={{ color: "#d4d7e0" }}>{formatTime(elapsed)}</span>
+      <header
+        className="sticky top-0 z-50 px-6 sm:px-8 py-4 flex items-center justify-between"
+        style={{
+          backgroundColor: "rgba(8, 9, 13, 0.85)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          borderBottom: "1px solid rgba(30, 34, 50, 0.5)",
+        }}
+      >
+        <a
+          href="/"
+          className="flex items-center gap-2 font-mono text-[13px] font-bold tracking-tight transition-colors duration-200"
+          style={{ color: "#e2e5ed", textDecoration: "none" }}
+        >
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: "#ef4444", boxShadow: "0 0 8px rgba(239,68,68,0.4)" }} />
+          trashmy.tech
+        </a>
+        <div className="flex items-center gap-4">
+          {phase !== "done" && (
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-full"
+              style={{ backgroundColor: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.15)" }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "#ef4444", boxShadow: "0 0 6px rgba(239,68,68,0.5)" }} />
+              <span className="font-mono text-[11px] font-medium" style={{ color: "#ef4444" }}>
+                {phase === "connecting" ? "Connecting" : phase === "crawling" ? "Scanning" : phase === "swarming" ? "Testing" : "Analyzing"}
+              </span>
+            </div>
+          )}
+          {phase === "done" && (
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-full"
+              style={{ backgroundColor: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.15)" }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#22c55e" }} />
+              <span className="font-mono text-[11px] font-medium" style={{ color: "#22c55e" }}>Complete</span>
+            </div>
+          )}
+          <span className="font-mono text-[11px] tabular-nums" style={{ color: "#4a506a" }}>
+            {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}
+          </span>
         </div>
       </header>
 
-      {/* Phase dots */}
-      <div className="flex items-center gap-3 px-6 py-4">
-        {(["crawling", "swarming", "reporting", "done"] as Phase[]).map((p, i) => {
-          const phaseOrder = ["crawling", "swarming", "reporting", "done"];
-          const currentIdx = phaseOrder.indexOf(phase);
-          const isActive = phase === p;
-          const isPast = currentIdx > i;
-          return (
-            <div key={p} className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full transition-colors" style={{
-                backgroundColor: isActive ? "#22c55e" : isPast ? "#22c55e" : "#252a3a",
-                animation: isActive ? "pulse 2s infinite" : undefined,
-              }} />
-              <span className="font-mono text-[11px] uppercase tracking-wider" style={{
-                color: isActive ? "#22c55e" : "#4a506a",
-              }}>
-                {p === "done" ? "report" : p}
-              </span>
-              {i < 3 && <div className="w-8 h-px" style={{ backgroundColor: "#252a3a" }} />}
-            </div>
-          );
-        })}
-      </div>
+      <main className="px-4 sm:px-6 py-6">
+        {/* URL banner */}
+        <div className="max-w-[760px] mx-auto mb-6">
+          <div
+            className="glass-card flex items-center gap-3 px-4 py-2.5 font-mono text-[12px]"
+            style={{ borderRadius: "10px" }}
+          >
+            <span className="font-semibold uppercase text-[10px] tracking-[1px]" style={{ color: "#ef4444" }}>target</span>
+            <div className="w-px h-3" style={{ backgroundColor: "#1e2232" }} />
+            <a href={testUrl} target="_blank" rel="noopener noreferrer" className="hover:underline truncate flex-1 transition-colors" style={{ color: "#8b90a7" }}>
+              {testUrl}
+            </a>
+            <ExternalLink size={11} style={{ color: "#4a506a", flexShrink: 0 }} />
+          </div>
+        </div>
 
-      <main className="px-6 pb-16">
-        {/* CRAWLING */}
-        {phase === "crawling" && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center py-20">
-            <div className="w-12 h-12 border-2 rounded-full animate-spin mb-4" style={{ borderColor: "#252a3a", borderTopColor: "#22c55e" }} />
-            <p className="font-mono text-xs uppercase tracking-[2px]" style={{ color: "#7a8099" }}>scanning</p>
-            <p className="font-mono text-sm mt-2" style={{ color: "#d4d7e0" }}>{testUrl}</p>
-          </motion.div>
-        )}
-
-        {/* SWARMING — Two column layout */}
-        {(phase === "swarming" || phase === "reporting") && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-            {/* Crawl stats */}
+        {/* ═══ IMMERSIVE SWARMING / CRAWLING ═══ */}
+        {phase !== "done" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="max-w-[1100px] mx-auto"
+          >
+            {/* Crawl stats ribbon */}
             {crawlData && (
-              <div className="flex flex-wrap gap-6 mb-6 font-mono text-xs">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6"
+              >
                 {[
-                  { label: "load", value: `${crawlData.load_time_ms || 0}ms` },
-                  { label: "links", value: crawlData.links_count || 0 },
-                  { label: "forms", value: crawlData.forms_count || 0 },
-                  { label: "missing alt", value: crawlData.images_missing_alt || 0 },
-                  { label: "violations", value: crawlData.accessibility_violations_count || 0 },
-                ].map((s) => (
-                  <div key={s.label}>
-                    <span style={{ color: "#d4d7e0" }}>{s.value}</span>
-                    <span className="ml-1" style={{ color: "#4a506a" }}>{s.label}</span>
+                  { label: "Links", value: crawlData.links_count || 0 },
+                  { label: "Forms", value: crawlData.forms_count || 0 },
+                  { label: "Violations", value: crawlData.accessibility_violations_count || 0, warn: true },
+                  { label: "Load Time", value: `${((crawlData.load_time_ms || 0) / 1000).toFixed(1)}s` },
+                ].map((item) => (
+                  <div key={item.label} className="glass-card p-4 text-center glass-card-hover" style={{ borderRadius: "10px" }}>
+                    <div className="font-mono text-[20px] font-bold" style={{ color: item.warn && typeof item.value === "number" && item.value > 0 ? "#ef4444" : "#e2e5ed" }}>
+                      {item.value}
+                    </div>
+                    <div className="font-mono text-[9px] uppercase tracking-[1.5px] mt-1" style={{ color: "#4a506a" }}>{item.label}</div>
                   </div>
                 ))}
-              </div>
+              </motion.div>
             )}
 
-            <div className="flex flex-col lg:flex-row gap-px" style={{ borderColor: "#252a3a" }}>
-              {/* Left: Browser view */}
-              <div className="flex-[55] min-w-0">
-                {/* Agent tabs */}
-                <div className="flex overflow-x-auto gap-1 pb-2 mb-3">
-                  {agentList.map((agent) => (
-                    <button
+            {/* ── Global progress bar ── */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-mono text-[10px] uppercase tracking-[2px]" style={{ color: "#4a506a" }}>
+                  {phase === "connecting" ? "Connecting" : phase === "crawling" ? "Crawling Site" : phase === "reporting" ? "Generating Report" : "Agents Running"}
+                </span>
+                <span className="font-mono text-[10px] tabular-nums" style={{ color: "#8b90a7" }}>
+                  {doneCount}/{totalAgents}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#181b25" }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: "#ef4444", boxShadow: "0 0 12px rgba(239,68,68,0.4)" }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(doneCount / totalAgents) * 100}%` }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                />
+              </div>
+            </div>
+
+            {/* ── Agent Grid — live cards showing each Playwright agent ── */}
+            {(phase === "swarming" || phase === "crawling") && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+                <AnimatePresence mode="popLayout">
+                  {sortedAgents.map((agent, idx) => (
+                    <motion.div
                       key={agent.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ delay: idx * 0.04, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                       onClick={() => setSelectedAgentId(agent.id)}
-                      className="flex items-center gap-1.5 px-2 py-1.5 shrink-0 transition-colors"
+                      className="group cursor-pointer glass-card overflow-hidden transition-all duration-300"
                       style={{
-                        borderBottom: selectedAgentId === agent.id ? "2px solid #d4d7e0" : "2px solid transparent",
-                        color: selectedAgentId === agent.id ? "#d4d7e0" : "#4a506a",
+                        borderRadius: "12px",
+                        borderColor: selectedAgentId === agent.id ? "rgba(239, 68, 68, 0.3)" : undefined,
+                        boxShadow: agent.status === "running" ? "0 0 20px rgba(34,197,94,0.06)" : undefined,
                       }}
                     >
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center font-mono" style={{
-                        fontSize: "8px",
-                        backgroundColor: "#0f1117",
-                        border: `1.5px solid ${catColor(agent.category)}`,
-                        color: "#7a8099",
-                      }}>
-                        {initials(agent.name)}
-                      </div>
-                      <span className="font-mono text-[11px]">{agent.name}</span>
-                      <div className="w-1.5 h-1.5 rounded-full" style={{
-                        backgroundColor: agent.status === "running" ? "#22c55e" :
-                          agent.status === "complete" ? "#22c55e" :
-                          agent.status === "blocked" ? "#ef4444" :
-                          agent.status === "stuck" ? "#eab308" : "#4a506a",
-                        animation: agent.status === "running" ? "pulse 1.5s infinite" : undefined,
-                      }} />
-                    </button>
-                  ))}
-                </div>
-
-                {/* Selected agent view */}
-                {selectedAgent && (
-                  <div>
-                    {selectedAgent.status === "waiting" && (
-                      <div className="py-12 text-center font-mono text-xs" style={{ color: "#4a506a" }}>
-                        waiting to deploy
-                      </div>
-                    )}
-
-                    {(selectedAgent.status === "running" || selectedAgent.status === "complete" || selectedAgent.status === "blocked" || selectedAgent.status === "stuck") && (
-                      <div>
-                        {/* Step log */}
-                        <div className="space-y-1 max-h-64 overflow-y-auto p-3 rounded" style={{ backgroundColor: "#0f1117" }}>
-                          {selectedAgent.steps.length === 0 && (
-                            <div className="font-mono text-[11px]" style={{ color: "#4a506a" }}>
-                              {selectedAgent.status === "running" ? "running..." : "no steps recorded"}
-                            </div>
+                      {/* Agent header */}
+                      <div className="flex items-center gap-2.5 px-3.5 py-2.5" style={{ borderBottom: "1px solid rgba(30, 34, 50, 0.4)" }}>
+                        {/* Status dot with pulse */}
+                        <div className="relative">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0 transition-all duration-300" style={{
+                            backgroundColor:
+                              agent.status === "running" ? "#22c55e" :
+                              agent.status === "complete" ? "#3b82f6" :
+                              agent.status === "blocked" ? "#ef4444" :
+                              agent.status === "stuck" ? "#eab308" : "#1e2232",
+                          }} />
+                          {agent.status === "running" && (
+                            <div className="absolute inset-0 w-2.5 h-2.5 rounded-full animate-ping" style={{ backgroundColor: "#22c55e", opacity: 0.4 }} />
                           )}
-                          {selectedAgent.steps.map((step, i) => (
-                            <div key={i} className="font-mono text-[11px] flex gap-2">
-                              <span style={{ color: "#4a506a" }}>[{step.step}]</span>
-                              <span style={{ color: "#7a8099" }}>{step.action}</span>
-                              <span style={{ color: "#d4d7e0" }} className="truncate">
-                                &apos;{step.target}&apos;
-                              </span>
-                              <span className="ml-auto shrink-0" style={{
-                                color: step.result === "success" ? "#22c55e" : "#ef4444"
-                              }}>
-                                {step.result === "success" ? "ok" : "fail"}
-                              </span>
-                            </div>
-                          ))}
                         </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono text-[11px] font-semibold truncate" style={{ color: "#e2e5ed" }}>{agent.name}</div>
+                          <div className="font-mono text-[9px]" style={{ color: catColor(agent.category) }}>{agent.category}</div>
+                        </div>
+                        <div className="font-mono text-[9px] px-1.5 py-0.5 rounded-md shrink-0" style={{
+                          backgroundColor:
+                            agent.status === "running" ? "rgba(34,197,94,0.1)" :
+                            agent.status === "complete" ? "rgba(59,130,246,0.1)" :
+                            agent.status === "blocked" ? "rgba(239,68,68,0.1)" :
+                            "rgba(30,34,50,0.5)",
+                          color:
+                            agent.status === "running" ? "#22c55e" :
+                            agent.status === "complete" ? "#3b82f6" :
+                            agent.status === "blocked" ? "#ef4444" :
+                            agent.status === "stuck" ? "#eab308" : "#4a506a",
+                        }}>
+                          {agent.status === "running" ? `step ${agent.steps.length}` :
+                           agent.status === "complete" ? `${((agent.timeMs || 0) / 1000).toFixed(1)}s` :
+                           agent.status}
+                        </div>
+                      </div>
 
-                        {/* Findings */}
-                        {selectedAgent.findings.length > 0 && (
-                          <div className="mt-3 space-y-2">
-                            {selectedAgent.findings.map((f, i) => (
-                              <div key={i} className="p-3 rounded" style={{
-                                backgroundColor: "#0f1117",
-                                borderLeft: `3px solid ${severityColor(f.type)}`,
-                              }}>
-                                <div className="font-mono text-[11px]" style={{ color: "#d4d7e0" }}>{f.title}</div>
-                                <div className="text-[12px] mt-1" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{f.detail}</div>
-                                {f.measured_value && (
-                                  <div className="font-mono text-[11px] mt-1">
-                                    <span style={{ color: "#d4d7e0" }}>{f.measured_value}</span>
-                                    {f.expected_value && <span style={{ color: "#4a506a" }}> (expected: {f.expected_value})</span>}
-                                  </div>
-                                )}
-                              </div>
+                      {/* Live step feed — last 4 steps */}
+                      <div className="px-3 py-2 min-h-[72px] max-h-[96px] overflow-hidden">
+                        {agent.steps.length > 0 ? (
+                          <div className="space-y-1">
+                            {agent.steps.slice(-4).map((step) => (
+                              <motion.div
+                                key={step.step}
+                                initial={{ opacity: 0, x: -8 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                className="flex gap-1.5 font-mono text-[10px] items-start"
+                              >
+                                <span className="w-3 text-right shrink-0 tabular-nums" style={{ color: "#252a3a" }}>{step.step}</span>
+                                <span className="shrink-0 font-semibold" style={{
+                                  color: step.result === "success" ? "#22c55e" : step.result === "fail" ? "#ef4444" : "#eab308",
+                                }}>
+                                  {step.action}
+                                </span>
+                                <span className="truncate" style={{ color: "#4a506a" }}>{step.target}</span>
+                              </motion.div>
                             ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-full">
+                            {agent.status === "waiting" ? (
+                              <span className="font-mono text-[10px]" style={{ color: "#1e2232" }}>queued</span>
+                            ) : (
+                              <div className="flex gap-1">
+                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e", animationDelay: "0ms" }} />
+                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e", animationDelay: "200ms" }} />
+                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e", animationDelay: "400ms" }} />
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
 
-              {/* Right: Overview */}
-              <div className="flex-[45] min-w-0 lg:pl-6 mt-6 lg:mt-0">
-                {/* Counters */}
-                <div className="flex gap-4 mb-4 font-mono text-xs">
-                  <span style={{ color: "#4a506a" }}>{totalAgents} agents</span>
-                  <span style={{ color: "#d4d7e0" }}>{doneCount}/{totalAgents} complete</span>
-                  <span style={{ color: issueCount > 10 ? "#ef4444" : issueCount > 0 ? "#eab308" : "#7a8099" }}>
-                    {issueCount} issues
+                      {/* Findings count badge */}
+                      {agent.findings.length > 0 && (
+                        <div className="px-3 pb-2 flex items-center gap-1.5">
+                          <AlertTriangle size={10} style={{ color: "#ef4444" }} />
+                          <span className="font-mono text-[9px] font-semibold" style={{ color: "#ef4444" }}>
+                            {agent.findings.length} issue{agent.findings.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Mini progress bar per agent */}
+                      <div className="h-0.5" style={{
+                        backgroundColor: agent.status === "complete" ? "#3b82f6" :
+                                         agent.status === "running" ? "#22c55e" :
+                                         agent.status === "blocked" ? "#ef4444" :
+                                         "#0f1117",
+                        opacity: agent.status === "waiting" ? 0.2 : 0.6,
+                        transition: "all 0.4s ease",
+                      }} />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {/* ── Expanded agent detail panel ── */}
+            <AnimatePresence>
+              {selectedAgent && phase === "swarming" && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mb-6 overflow-hidden"
+                >
+                  <div className="glass-card overflow-hidden" style={{ borderRadius: "12px", borderColor: "rgba(239,68,68,0.15)" }}>
+                    {/* Faux browser bar */}
+                    <div className="flex items-center gap-2 px-4 py-2.5" style={{ backgroundColor: "rgba(10, 11, 15, 0.8)", borderBottom: "1px solid rgba(30, 34, 50, 0.5)" }}>
+                      <div className="flex gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#ef4444" }} />
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#eab308" }} />
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#22c55e" }} />
+                      </div>
+                      <div className="flex-1 font-mono text-[11px] text-center font-semibold" style={{ color: "#e2e5ed" }}>
+                        {selectedAgent.name}
+                        {selectedAgent.status === "running" && (
+                          <span className="ml-2 font-normal" style={{ color: "#22c55e" }}>testing...</span>
+                        )}
+                      </div>
+                      <button onClick={() => setSelectedAgentId(null)} className="font-mono text-[10px] px-2 py-0.5 rounded" style={{ color: "#4a506a" }}>
+                        close
+                      </button>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-0">
+                      {/* Full step log */}
+                      <div className="p-3 max-h-[280px] overflow-y-auto" style={{ borderRight: "1px solid rgba(30,34,50,0.3)" }}>
+                        <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "#4a506a" }}>Activity Log</div>
+                        <div className="space-y-1">
+                          {selectedAgent.steps.map((step) => (
+                            <motion.div
+                              key={step.step}
+                              initial={{ opacity: 0, x: -6 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              className="flex gap-2 font-mono text-[10px]"
+                            >
+                              <span className="w-4 text-right shrink-0 tabular-nums" style={{ color: "#252a3a" }}>{step.step}</span>
+                              <span className="shrink-0 w-12 font-semibold" style={{ color: step.result === "success" ? "#22c55e" : "#ef4444" }}>
+                                {step.action}
+                              </span>
+                              <span className="truncate" style={{ color: "#7a8099" }}>{step.target}</span>
+                            </motion.div>
+                          ))}
+                          {selectedAgent.status === "running" && (
+                            <div className="flex gap-1 mt-2 ml-6">
+                              <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e" }} />
+                              <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e", animationDelay: "200ms" }} />
+                              <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "#22c55e", animationDelay: "400ms" }} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Findings + info */}
+                      <div className="p-3 max-h-[280px] overflow-y-auto">
+                        <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "#4a506a" }}>Agent Info</div>
+                        <div className="font-mono text-[11px] mb-3 leading-relaxed" style={{ color: "#7a8099" }}>{selectedAgent.description}</div>
+                        {selectedAgent.findings.length > 0 && (
+                          <>
+                            <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "#ef4444" }}>
+                              Findings ({selectedAgent.findings.length})
+                            </div>
+                            <div className="space-y-1.5">
+                              {selectedAgent.findings.map((f, i) => (
+                                <div key={i} className="flex gap-2 font-mono text-[10px]">
+                                  <AlertTriangle size={10} className="shrink-0 mt-0.5" style={{ color: f.type === "issue" ? "#ef4444" : "#eab308" }} />
+                                  <div>
+                                    <div style={{ color: "#e2e5ed" }}>{f.title}</div>
+                                    <div style={{ color: "#4a506a" }}>{f.detail}</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* ── Event log ── */}
+            <div ref={logRef} className="glass-card p-3 max-h-40 overflow-y-auto font-mono text-[10px] mb-4" style={{ borderRadius: "10px" }}>
+              {logs.slice(0, 50).map((log, i) => (
+                <div key={i} className="flex gap-2 mb-0.5 leading-relaxed">
+                  <span className="shrink-0" style={{ color: "#1e2232" }}>{log.time}</span>
+                  <span style={{
+                    color: log.level === "error" ? "#ef4444" :
+                      log.level === "warning" ? "#eab308" :
+                        log.level === "success" ? "#22c55e" : "#4a506a"
+                  }}>
+                    {log.message}
                   </span>
                 </div>
-
-                {/* Agent list */}
-                <div className="space-y-1 max-h-60 overflow-y-auto mb-4">
-                  {sortedAgents.map((agent) => (
-                    <button
-                      key={agent.id}
-                      onClick={() => setSelectedAgentId(agent.id)}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded transition-colors"
-                      style={{
-                        backgroundColor: selectedAgentId === agent.id ? "#181b25" : "transparent",
-                      }}
-                    >
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center font-mono shrink-0" style={{
-                        fontSize: "8px",
-                        backgroundColor: "#0f1117",
-                        border: `1.5px solid ${catColor(agent.category)}`,
-                        color: "#7a8099",
-                      }}>
-                        {initials(agent.name)}
-                      </div>
-                      <span className="font-mono text-[11px] truncate" style={{ color: "#d4d7e0" }}>{agent.name}</span>
-                      <span className="ml-auto font-mono text-[11px] shrink-0" style={{
-                        color: agent.status === "complete" ? "#22c55e" :
-                          agent.status === "blocked" ? "#ef4444" :
-                          agent.status === "running" ? "#22c55e" :
-                          agent.status === "stuck" ? "#eab308" : "#4a506a",
-                      }}>
-                        {agent.status === "running" ? `step ${agent.steps.length}` :
-                         agent.status === "complete" ? `${((agent.timeMs || 0) / 1000).toFixed(1)}s` :
-                         agent.status}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Event log */}
-                <div ref={logRef} className="p-3 rounded max-h-48 overflow-y-auto font-mono text-[11px]" style={{ backgroundColor: "#0f1117" }}>
-                  {logs.slice(0, 50).map((log, i) => (
-                    <div key={i} className="flex gap-2 mb-0.5">
-                      <span style={{ color: "#4a506a" }}>{log.time}</span>
-                      <span style={{
-                        color: log.level === "error" ? "#ef4444" :
-                          log.level === "warning" ? "#eab308" :
-                          log.level === "success" ? "#22c55e" : "#7a8099"
-                      }}>
-                        {log.message}
-                      </span>
-                    </div>
-                  ))}
-                  <span className="cursor-blink" />
-                </div>
-              </div>
+              ))}
+              <span className="cursor-blink" />
             </div>
 
-            {/* Progress bar */}
-            <div className="mt-4 h-0.5 rounded-full overflow-hidden" style={{ backgroundColor: "#181b25" }}>
-              <div className="h-full transition-all duration-500" style={{
-                width: `${(doneCount / totalAgents) * 100}%`,
-                backgroundColor: doneCount / totalAgents > 0.7 ? "#22c55e" : doneCount / totalAgents > 0.3 ? "#eab308" : "#ef4444",
-              }} />
-            </div>
-
-            {/* Reporting spinner */}
+            {/* ── Cinematic Reporting Phase ── */}
             {phase === "reporting" && (
-              <div className="flex flex-col items-center py-12">
-                <div className="w-8 h-8 border-2 rounded-full animate-spin mb-3" style={{ borderColor: "#252a3a", borderTopColor: "#22c55e" }} />
-                <span className="font-mono text-xs" style={{ color: "#4a506a" }}>generating report...</span>
-              </div>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex flex-col items-center py-16"
+              >
+                {/* Animated counter loader */}
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: "spring", damping: 15 }}
+                  className="mb-8"
+                >
+                  <CounterLoader color="#ef4444" />
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                >
+                  <span className="font-mono text-[14px] font-semibold" style={{ color: "#e2e5ed" }}>Analyzing results</span>
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="font-mono text-[11px] mt-2"
+                  style={{ color: "#4a506a" }}
+                >
+                  {doneCount} agents tested · generating report with AI
+                </motion.div>
+                {/* Pulsing orb */}
+                <motion.div
+                  className="w-20 h-20 rounded-full mt-8"
+                  style={{
+                    background: "radial-gradient(circle, rgba(239,68,68,0.15) 0%, transparent 70%)",
+                    boxShadow: "0 0 60px rgba(239,68,68,0.1)",
+                  }}
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] }}
+                  transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+                />
+              </motion.div>
             )}
           </motion.div>
         )}
 
-        {/* REPORT */}
+        {/* ═══ REPORT ═══ */}
         {phase === "done" && report && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="max-w-[720px] mx-auto mt-8"
+            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="max-w-[760px] mx-auto mt-4"
           >
-            {/* Score */}
-            <div className="mb-12">
-              <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12 }}>
-                <span className="font-mono text-[56px] font-bold" style={{ color: scoreColor(report.score?.overall ?? 0) }}>
-                  {animatedScore}
-                </span>
-                <span className="font-mono text-[24px] ml-1" style={{ color: "#4a506a" }}>/100</span>
+            {/* ── Score Hero ── */}
+            <div className="mb-12 text-center">
+              <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12, delay: 0.15 }}>
+                <div className="inline-block relative">
+                  <span
+                    className="font-mono text-[80px] font-bold leading-none"
+                    style={{
+                      color: scoreColor(report.score?.overall ?? 0),
+                      textShadow: `0 0 40px ${scoreColor(report.score?.overall ?? 0)}30`,
+                    }}
+                  >
+                    {animatedScore}
+                  </span>
+                  <span className="font-mono text-[28px] ml-1" style={{ color: "#1e2232" }}>/100</span>
+                </div>
               </motion.div>
               {report.score?.confidence != null && (
-                <div className="font-mono text-[11px] mt-1" style={{ color: "#4a506a" }}>
-                  {report.score.confidence > 0.7 ? "high" : report.score.confidence > 0.4 ? "moderate" : "low"} confidence
+                <div className="font-mono text-[10px] uppercase tracking-[3px] mt-3" style={{ color: "#4a506a" }}>
+                  {report.score.confidence > 0.7 ? "High" : report.score.confidence > 0.4 ? "Moderate" : "Low"} Confidence
                 </div>
               )}
-              <div className="font-mono text-xs mt-1" style={{ color: "#7a8099" }}>
-                {report.stats?.total || 0} personas tested &nbsp;--&nbsp; {issueCount} issues found &nbsp;--&nbsp; {elapsed}s
+              <div className="flex items-center justify-center gap-3 font-mono text-[11px] mt-4">
+                {[
+                  { label: `${report.stats?.total || 0} personas`, color: "#8b90a7" },
+                  { label: `${issueCount} issues`, color: issueCount > 5 ? "#ef4444" : "#8b90a7" },
+                  { label: `${elapsed}s`, color: "#8b90a7" },
+                ].map((stat, i) => (
+                  <span key={i} className="flex items-center gap-3">
+                    {i > 0 && <span style={{ color: "#1e2232" }}>·</span>}
+                    <span style={{ color: stat.color }}>{stat.label}</span>
+                  </span>
+                ))}
               </div>
               {report.score?.reasoning && (
-                <p className="text-[15px] leading-[1.7] mt-4" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>
+                <p className="text-[16px] leading-[1.8] mt-6 max-w-[560px] mx-auto" style={{ color: "#8b90a7", fontFamily: "var(--font-body)" }}>
                   {report.score.reasoning}
                 </p>
               )}
             </div>
 
-            {/* Category Scores */}
+            {/* ── Quick Stats Overview ── */}
+            <StatsCard
+              title="Test Overview"
+              className="mb-8"
+              accentColor="#ef4444"
+              stats={[
+                { label: "Personas", value: report.stats?.total || 0 },
+                { label: "Completed", value: report.stats?.completed || 0, change: report.stats?.total ? `${Math.round(((report.stats.completed || 0) / report.stats.total) * 100)}%` : undefined, changeType: "positive" },
+                { label: "Issues Found", value: issueCount, changeType: issueCount > 5 ? "negative" : "neutral" },
+                { label: "Time", value: `${elapsed}s` },
+              ]}
+            />
+
+            {/* ── Category Scores with Animated Bars ── */}
             {report.category_scores && (
-              <div className="flex flex-wrap gap-6 mb-12">
-                {(["accessibility", "security", "usability", "mobile", "performance"] as const).map((cat) => {
-                  const cs = report.category_scores?.[cat];
-                  if (!cs) return null;
-                  const catColors: Record<string, string> = {
-                    accessibility: "#3b82f6", security: "#6b7280",
-                    usability: "#8b5cf6", mobile: "#14b8a6", performance: "#eab308",
-                  };
-                  return (
-                    <div key={cat} className="min-w-[120px]">
-                      <div className="font-mono text-[11px] uppercase tracking-[1px]" style={{ color: catColors[cat] }}>{cat}</div>
-                      <div className="flex items-baseline gap-1 mt-1">
-                        <span className="font-mono text-[24px] font-bold" style={{ color: scoreColor(cs.score) }}>{cs.score}</span>
-                        <span className="font-mono text-xs" style={{ color: "#4a506a" }}>/100</span>
-                      </div>
-                      <p className="text-[12px] mt-1 line-clamp-2" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{cs.reasoning}</p>
-                    </div>
-                  );
-                })}
-              </div>
+              <TooltipProvider delayDuration={100}>
+                <div className="mb-12">
+                  <div className="font-mono text-[10px] uppercase tracking-[3px] mb-5" style={{ color: "#4a506a" }}>Category Breakdown</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {(["accessibility", "security", "usability", "mobile", "performance"] as const).map((cat, idx) => {
+                      const cs = report.category_scores?.[cat];
+                      if (!cs) return null;
+                      const Icon = CAT_ICONS[cat] || Shield;
+                      const color = CAT_COLORS[cat] || "#4a506a";
+                      return (
+                        <Tooltip key={cat}>
+                          <TooltipTrigger asChild>
+                            <motion.div
+                              initial={{ opacity: 0, y: 12 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: idx * 0.06, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                              className="glass-card glass-card-hover p-4 text-center cursor-default"
+                              style={{ borderRadius: "12px" }}
+                            >
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: `${color}12` }}>
+                                <Icon size={15} style={{ color }} />
+                              </div>
+                              <div className="font-mono text-[24px] font-bold" style={{ color: scoreColor(cs.score), textShadow: `0 0 20px ${scoreColor(cs.score)}20` }}>
+                                {cs.score}
+                              </div>
+                              <div className="font-mono text-[9px] uppercase tracking-[1px] mt-1.5" style={{ color }}>
+                                {cat}
+                              </div>
+                              <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(30,34,50,0.5)" }}>
+                                <motion.div
+                                  className="h-full rounded-full"
+                                  style={{ backgroundColor: scoreColor(cs.score) }}
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${cs.score}%` }}
+                                  transition={{ duration: 1, delay: 0.3 + idx * 0.1, ease: [0.16, 1, 0.3, 1] }}
+                                />
+                              </div>
+                            </motion.div>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[260px]">
+                            <p className="font-mono text-[11px] font-semibold mb-1.5" style={{ color: "#e2e5ed" }}>{cat} — {cs.score}/100</p>
+                            <p className="text-[12px] leading-relaxed" style={{ color: "#8b90a7", fontFamily: "var(--font-body)" }}>{cs.reasoning}</p>
+                            {cs.key_evidence && cs.key_evidence.length > 0 && (
+                              <div className="mt-2 space-y-0.5">
+                                {cs.key_evidence.map((e, i) => (
+                                  <div key={i} className="font-mono text-[10px]" style={{ color: "#4a506a" }}>• {e}</div>
+                                ))}
+                              </div>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+
+                  {/* SparkLine overview */}
+                  <div className="glass-card mt-4 p-4 flex items-center justify-between" style={{ borderRadius: "10px" }}>
+                    <div className="font-mono text-[10px] uppercase tracking-[1px]" style={{ color: "#4a506a" }}>Score Distribution</div>
+                    <SparkLine
+                      data={(["accessibility", "security", "usability", "mobile", "performance"] as const).map(c => report.category_scores?.[c]?.score || 0)}
+                      width={200}
+                      height={40}
+                      color="#ef4444"
+                    />
+                  </div>
+                </div>
+              </TooltipProvider>
             )}
 
-            {/* Executive Summary */}
+            {/* ── Executive Summary ── */}
             {report.narrative?.executive_summary && (
               <div className="mb-12">
-                <div className="h-px mb-6" style={{ backgroundColor: "#252a3a" }} />
-                <div className="font-mono text-[11px] uppercase tracking-[2px] mb-3" style={{ color: "#4a506a" }}>summary</div>
-                <p className="text-[16px] leading-[1.7]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>
-                  {report.narrative.executive_summary}
-                </p>
+                <div className="h-px mb-8" style={{ backgroundColor: "#1e2232" }} />
+                <div className="font-mono text-[10px] uppercase tracking-[3px] mb-4" style={{ color: "#4a506a" }}>Executive Summary</div>
+                <div className="glass-card p-6" style={{ borderRadius: "12px" }}>
+                  <p className="text-[16px] leading-[1.9]" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>
+                    {report.narrative.executive_summary}
+                  </p>
+                </div>
               </div>
             )}
 
-            {/* What Works / What Doesn't */}
+            {/* ── What Works / What Doesn't ── */}
             {(report.narrative?.what_works?.length || report.narrative?.what_doesnt_work?.length) ? (
-              <div className="grid sm:grid-cols-2 gap-8 mb-12">
+              <div className="grid sm:grid-cols-2 gap-4 mb-12">
                 {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
-                  <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[1px] mb-4" style={{ color: "#22c55e" }}>what works</div>
+                  <ReportFolder
+                    title="What Works"
+                    accentColor="#22c55e"
+                    count={report.narrative.what_works.length}
+                    icon={<CheckCircle2 size={14} style={{ color: "#22c55e" }} />}
+                    defaultOpen
+                  >
                     <div className="space-y-4">
                       {report.narrative.what_works.map((w, i) => (
-                        <div key={i}>
-                          <div className="text-[14px] font-medium" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>{w.title}</div>
-                          <div className="text-[13px] mt-0.5" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{w.detail}</div>
+                        <div key={i} className="pl-3" style={{ borderLeft: "2px solid rgba(34,197,94,0.2)" }}>
+                          <div className="text-[14px] font-semibold" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>{w.title}</div>
+                          <div className="text-[13px] mt-1 leading-relaxed" style={{ color: "#8b90a7", fontFamily: "var(--font-body)" }}>{w.detail}</div>
                           {w.personas_who_benefited && (
-                            <div className="font-mono text-[11px] mt-1" style={{ color: "#4a506a" }}>
-                              benefited: {w.personas_who_benefited.join(", ")}
+                            <div className="font-mono text-[10px] mt-1.5" style={{ color: "#4a506a" }}>
+                              {w.personas_who_benefited.join(" · ")}
                             </div>
                           )}
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </ReportFolder>
                 )}
                 {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (
-                  <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[1px] mb-4" style={{ color: "#ef4444" }}>what doesn&apos;t</div>
+                  <ReportFolder
+                    title="What Doesn't Work"
+                    accentColor="#ef4444"
+                    count={report.narrative.what_doesnt_work.length}
+                    icon={<XCircle size={14} style={{ color: "#ef4444" }} />}
+                    defaultOpen
+                  >
                     <div className="space-y-4">
                       {report.narrative.what_doesnt_work.map((w, i) => (
-                        <div key={i}>
-                          <div className="text-[14px] font-medium" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>{w.title}</div>
-                          <div className="text-[13px] mt-0.5" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{w.detail}</div>
+                        <div key={i} className="pl-3" style={{ borderLeft: "2px solid rgba(239,68,68,0.2)" }}>
+                          <div className="text-[14px] font-semibold" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>{w.title}</div>
+                          <div className="text-[13px] mt-1 leading-relaxed" style={{ color: "#8b90a7", fontFamily: "var(--font-body)" }}>{w.detail}</div>
                           {w.personas_who_suffered && (
-                            <div className="font-mono text-[11px] mt-1" style={{ color: "#4a506a" }}>
-                              affected: {w.personas_who_suffered.join(", ")}
+                            <div className="font-mono text-[10px] mt-1.5" style={{ color: "#4a506a" }}>
+                              {w.personas_who_suffered.join(" · ")}
                             </div>
                           )}
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </ReportFolder>
                 )}
               </div>
             ) : null}
 
-            {/* Persona Verdicts */}
+            {/* ── Persona Verdicts ── */}
             {report.narrative?.persona_verdicts && report.narrative.persona_verdicts.length > 0 && (
               <div className="mb-12">
-                <div className="font-mono text-[11px] uppercase tracking-[2px] mb-4" style={{ color: "#4a506a" }}>persona results</div>
-                <div className="space-y-1">
+                <div className="font-mono text-[10px] uppercase tracking-[3px] mb-5" style={{ color: "#4a506a" }}>Persona Results</div>
+
+                {/* Summary row */}
+                <ScoreCard
+                  className="mb-4"
+                  title="Agent Overview"
+                  headerIcon={<Users size={14} />}
+                  stats={[
+                    { title: "Completed", value: report.stats?.completed || 0 },
+                    { title: "Struggled", value: report.stats?.struggled || 0 },
+                    { title: "Blocked", value: report.stats?.blocked || 0, changePercent: report.stats?.blocked ? Math.round((report.stats.blocked / (report.stats?.total || 1)) * 100) : 0, changeDirection: "down" as const },
+                  ]}
+                  graphData={report.narrative.persona_verdicts.map((pv) => ({
+                    label: (pv.persona_name || pv.name || "Unknown"),
+                    value: pv.outcome === "completed" ? 90 : pv.outcome === "struggled" ? 50 : 15,
+                    color: pv.outcome === "completed" ? "#22c55e" : pv.outcome === "struggled" ? "#eab308" : "#ef4444",
+                    description: pv.outcome,
+                  }))}
+                  graphHeight={80}
+                  legendTitle="Agent Outcomes"
+                  showLegend={false}
+                />
+
+                <div className="space-y-1.5">
                   {report.narrative.persona_verdicts.map((pv) => {
                     const isExpanded = expandedPersona === pv.persona_id;
                     const sessionScreenshots = report.sessions_summary?.find(s => s.persona_id === pv.persona_id)?.screenshots || [];
@@ -716,30 +1012,35 @@ export default function TestPage() {
                       <div key={pv.persona_id}>
                         <button
                           onClick={() => setExpandedPersona(isExpanded ? null : pv.persona_id)}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded transition-colors text-left"
-                          style={{ backgroundColor: isExpanded ? "#181b25" : "transparent" }}
+                          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left"
+                          style={{
+                            backgroundColor: isExpanded ? "rgba(15, 17, 23, 0.7)" : "transparent",
+                            border: isExpanded ? "1px solid rgba(30, 34, 50, 0.6)" : "1px solid transparent",
+                            backdropFilter: isExpanded ? "blur(12px)" : "none",
+                          }}
                         >
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center font-mono shrink-0" style={{
-                            fontSize: "9px", backgroundColor: "#0f1117",
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center font-mono shrink-0 transition-all" style={{
+                            fontSize: "9px", backgroundColor: "rgba(8, 9, 13, 0.8)",
                             border: `2px solid ${catColor(agents.get(pv.persona_id)?.category || "unknown")}`,
-                            color: "#7a8099",
+                            color: "#8b90a7",
                           }}>
-                            {initials(pv.persona_name)}
+                            {initials((pv.persona_name || pv.name || "Unknown"))}
                           </div>
-                          <span className="text-[14px]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>
-                            {pv.persona_name}
+                          <span className="text-[14px] flex-1 font-medium" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>
+                            {(pv.persona_name || pv.name || "Unknown")}
                           </span>
-                          <span className="font-mono text-[11px] px-2 py-0.5 rounded" style={{
+                          <span className="font-mono text-[10px] uppercase px-2.5 py-1 rounded-full font-medium" style={{
                             backgroundColor: pv.outcome === "completed" ? "rgba(34,197,94,0.1)" : pv.outcome === "blocked" ? "rgba(239,68,68,0.1)" : "rgba(234,179,8,0.1)",
                             color: pv.outcome === "completed" ? "#22c55e" : pv.outcome === "blocked" ? "#ef4444" : "#eab308",
                           }}>
                             {pv.outcome}
                           </span>
-                          <span className="ml-auto font-mono text-xs" style={{
+                          <span className="font-mono text-[10px] hidden sm:inline" style={{
                             color: pv.would_recommend ? "#22c55e" : "#ef4444",
                           }}>
-                            {pv.would_recommend ? "yes" : "no"}
+                            {pv.would_recommend ? "✓ recommend" : "✗ not recommended"}
                           </span>
+                          <ChevronDown size={14} style={{ color: "#4a506a", transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.3s cubic-bezier(0.16,1,0.3,1)" }} />
                         </button>
 
                         <AnimatePresence>
@@ -750,19 +1051,21 @@ export default function TestPage() {
                               exit={{ height: 0, opacity: 0 }}
                               className="overflow-hidden"
                             >
-                              <div className="px-3 pb-4 pt-1 ml-10">
-                                <p className="text-[14px] leading-[1.7]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>
+                              <div className="px-4 pb-5 pt-2 ml-11">
+                                <p className="text-[14px] leading-[1.9]" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>
                                   {pv.narrative}
                                 </p>
                                 {pv.primary_barrier && (
-                                  <p className="text-[14px] mt-2" style={{ color: "#ef4444", fontFamily: "var(--font-dm-sans)" }}>
-                                    {pv.primary_barrier}
-                                  </p>
+                                  <div className="flex items-start gap-2.5 mt-3 p-3 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.1)" }}>
+                                    <AlertTriangle size={13} style={{ color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                                    <p className="text-[13px] leading-relaxed" style={{ color: "#ef4444", fontFamily: "var(--font-body)" }}>
+                                      {pv.primary_barrier}
+                                    </p>
+                                  </div>
                                 )}
 
-                                {/* Screenshot gallery */}
                                 {sessionScreenshots.length > 0 && (
-                                  <div className="flex gap-2 overflow-x-auto mt-3 pb-2">
+                                  <div className="flex gap-2.5 overflow-x-auto mt-4 pb-2">
                                     {sessionScreenshots.map((ss, i) => {
                                       const imgSrc = ss.screenshot_url
                                         ? `${API_URL}${ss.screenshot_url}`
@@ -772,12 +1075,12 @@ export default function TestPage() {
                                       if (!imgSrc) return null;
                                       return (
                                         <button key={i} onClick={() => setLightboxImg(imgSrc)}
-                                          className="shrink-0 rounded overflow-hidden"
-                                          style={{ border: "1px solid #252a3a", borderRadius: "4px" }}>
+                                          className="shrink-0 rounded-lg overflow-hidden transition-all duration-200 hover:scale-[1.03] hover:shadow-lg"
+                                          style={{ border: "1px solid rgba(30,34,50,0.5)" }}>
                                           <img src={imgSrc} alt={`Step ${ss.step}`}
-                                            className="w-[180px] h-auto" />
-                                          <div className="font-mono text-[10px] px-1 py-0.5" style={{ color: "#4a506a" }}>
-                                            step {ss.step}
+                                            className="w-[160px] h-auto" />
+                                          <div className="font-mono text-[9px] px-2 py-1" style={{ color: "#4a506a", backgroundColor: "rgba(10,11,15,0.6)" }}>
+                                            Step {ss.step}
                                           </div>
                                         </button>
                                       );
@@ -795,174 +1098,208 @@ export default function TestPage() {
               </div>
             )}
 
-            {/* Top Issues */}
+            {/* ── Top Issues ── */}
             {report.narrative?.top_issues && report.narrative.top_issues.length > 0 && (
-              <div className="mb-12">
-                <div className="font-mono text-[11px] uppercase tracking-[2px] mb-4" style={{ color: "#4a506a" }}>top issues</div>
+              <ReportFolder
+                title="Top Issues"
+                accentColor="#eab308"
+                count={report.narrative.top_issues.length}
+                subtitle="Prioritized by severity"
+                icon={<AlertTriangle size={14} style={{ color: "#eab308" }} />}
+                defaultOpen
+                className="mb-12"
+              >
                 <div className="space-y-3">
                   {report.narrative.top_issues.map((issue, i) => (
-                    <div key={i} className="p-5 rounded" style={{
-                      backgroundColor: "#0f1117",
-                      border: "1px solid #252a3a",
-                      borderLeft: `3px solid ${severityColor(issue.severity)}`,
-                      borderRadius: "4px",
-                    }}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded" style={{
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                      className="glass-card p-5"
+                      style={{
+                        borderRadius: "12px",
+                        borderLeft: `3px solid ${severityColor(issue.severity)}`,
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <span className="font-mono text-[9px] uppercase px-2 py-0.5 rounded-full font-medium" style={{
                           backgroundColor: `${severityColor(issue.severity)}15`,
                           color: severityColor(issue.severity),
                         }}>
                           {issue.severity}
                         </span>
                         {issue.category && (
-                          <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded" style={{
-                            backgroundColor: `${catColor(issue.category)}15`,
-                            color: catColor(issue.category),
+                          <span className="font-mono text-[9px] uppercase px-2 py-0.5 rounded-full" style={{
+                            backgroundColor: `${CAT_COLORS[issue.category] || "#4a506a"}10`,
+                            color: CAT_COLORS[issue.category] || "#4a506a",
                           }}>
                             {issue.category}
                           </span>
                         )}
                       </div>
-                      <div className="text-[16px] mb-2" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>{issue.title}</div>
-                      <p className="text-[14px] leading-[1.6] mb-3" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{issue.description}</p>
+                      <div className="text-[15px] font-semibold mb-2" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>{issue.title}</div>
+                      <p className="text-[13px] leading-[1.8] mb-2.5" style={{ color: "#8b90a7", fontFamily: "var(--font-body)" }}>{issue.description}</p>
                       {issue.fix && (
-                        <div className="p-3 rounded" style={{ backgroundColor: "#181b25", borderRadius: "4px" }}>
-                          <span className="font-mono text-[11px] uppercase" style={{ color: "#4a506a" }}>fix: </span>
-                          <span className="text-[14px]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>{issue.fix}</span>
+                        <div className="p-3 rounded-lg flex items-start gap-2" style={{ backgroundColor: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.1)" }}>
+                          <span className="font-mono text-[9px] uppercase font-semibold mt-0.5 shrink-0" style={{ color: "#22c55e" }}>Fix:</span>
+                          <span className="text-[13px] leading-relaxed" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>{issue.fix}</span>
                         </div>
                       )}
                       {issue.affected_personas && issue.affected_personas.length > 0 && (
-                        <div className="flex items-center gap-1 mt-3">
+                        <div className="flex items-center gap-1.5 mt-3">
                           {issue.affected_personas.map((name) => (
-                            <div key={name} className="w-6 h-6 rounded-full flex items-center justify-center font-mono" style={{
-                              fontSize: "7px", backgroundColor: "#181b25", color: "#7a8099",
+                            <div key={name} className="w-5 h-5 rounded-full flex items-center justify-center font-mono" style={{
+                              fontSize: "7px", backgroundColor: "rgba(30,34,50,0.5)", color: "#8b90a7",
                             }}>
                               {initials(name)}
                             </div>
                           ))}
+                          {issue.impact_estimate && (
+                            <span className="font-mono text-[10px] ml-2" style={{ color: "#4a506a" }}>{issue.impact_estimate}</span>
+                          )}
                         </div>
                       )}
-                      {issue.impact_estimate && (
-                        <div className="text-[13px] mt-2" style={{ color: "#7a8099", fontFamily: "var(--font-dm-sans)" }}>{issue.impact_estimate}</div>
-                      )}
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
-              </div>
+              </ReportFolder>
             )}
 
-            {/* Accessibility Audit */}
-            {report.narrative?.accessibility_audit && (
-              <div className="mb-12">
-                <div className="font-mono text-[11px] uppercase tracking-[1px] mb-4" style={{ color: "#3b82f6" }}>accessibility</div>
-                <div className="p-4 rounded" style={{ backgroundColor: "#0f1117", border: "1px solid #252a3a", borderRadius: "4px" }}>
+            {/* ── Accessibility + Security side by side ── */}
+            <div className="grid sm:grid-cols-2 gap-4 mb-12">
+              {report.narrative?.accessibility_audit && (
+                <ReportFolder
+                  title="Accessibility Audit"
+                  accentColor="#3b82f6"
+                  count={report.narrative.accessibility_audit.total_violations}
+                  subtitle={`${report.narrative.accessibility_audit.critical || 0} critical`}
+                  icon={<Eye size={14} style={{ color: "#3b82f6" }} />}
+                  defaultOpen
+                >
                   {report.narrative.accessibility_audit.total_violations != null && (
-                    <div className="mb-3">
-                      <span className="font-mono text-[24px]" style={{ color: "#d4d7e0" }}>
+                    <div className="mb-4">
+                      <span className="font-mono text-[32px] font-bold" style={{ color: "#e2e5ed" }}>
                         {report.narrative.accessibility_audit.total_violations}
                       </span>
-                      <span className="font-mono text-xs ml-1" style={{ color: "#4a506a" }}>violations</span>
+                      <span className="font-mono text-[11px] ml-1.5" style={{ color: "#4a506a" }}>violations</span>
                     </div>
                   )}
-                  <div className="space-y-1 font-mono text-[13px]">
-                    {report.narrative.accessibility_audit.critical != null && (
-                      <div className="flex justify-between">
-                        <span style={{ color: "#ef4444" }}>critical</span>
-                        <span style={{ color: "#d4d7e0" }}>{report.narrative.accessibility_audit.critical}</span>
+                  <div className="space-y-2.5">
+                    {[
+                      { label: "Critical", value: report.narrative.accessibility_audit.critical, color: "#ef4444" },
+                      { label: "Serious", value: report.narrative.accessibility_audit.serious, color: "#eab308" },
+                      { label: "Moderate", value: report.narrative.accessibility_audit.moderate, color: "#8b90a7" },
+                      { label: "Minor", value: report.narrative.accessibility_audit.minor_count, color: "#4a506a" },
+                    ].filter(item => item.value != null).map((item) => (
+                      <div key={item.label} className="flex items-center justify-between font-mono text-[11px]">
+                        <span style={{ color: item.color }}>{item.label}</span>
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(30,34,50,0.5)" }}>
+                            <div className="h-full rounded-full transition-all" style={{ backgroundColor: item.color, width: `${Math.min(((item.value || 0) / Math.max(report.narrative!.accessibility_audit!.total_violations || 1, 1)) * 100, 100)}%` }} />
+                          </div>
+                          <span className="tabular-nums" style={{ color: "#e2e5ed", minWidth: 18, textAlign: "right" }}>{item.value}</span>
+                        </div>
                       </div>
-                    )}
-                    {report.narrative.accessibility_audit.serious != null && (
-                      <div className="flex justify-between">
-                        <span style={{ color: "#eab308" }}>serious</span>
-                        <span style={{ color: "#d4d7e0" }}>{report.narrative.accessibility_audit.serious}</span>
-                      </div>
-                    )}
-                    {report.narrative.accessibility_audit.moderate != null && (
-                      <div className="flex justify-between">
-                        <span style={{ color: "#7a8099" }}>moderate</span>
-                        <span style={{ color: "#d4d7e0" }}>{report.narrative.accessibility_audit.moderate}</span>
-                      </div>
-                    )}
-                    {report.narrative.accessibility_audit.minor_count != null && (
-                      <div className="flex justify-between">
-                        <span style={{ color: "#4a506a" }}>minor</span>
-                        <span style={{ color: "#d4d7e0" }}>{report.narrative.accessibility_audit.minor_count}</span>
-                      </div>
-                    )}
+                    ))}
                   </div>
-                  {report.narrative.accessibility_audit.details && report.narrative.accessibility_audit.details.length > 0 && (
-                    <div className="mt-3 space-y-1">
-                      {report.narrative.accessibility_audit.details.map((d, i) => (
-                        <div key={i} className="font-mono text-xs" style={{ color: "#7a8099" }}>{d}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+                </ReportFolder>
+              )}
 
-            {/* Chaos Test Summary */}
-            {report.narrative?.chaos_test_summary && (
-              <div className="mb-12">
-                <div className="font-mono text-[11px] uppercase tracking-[1px] mb-4" style={{ color: "#6b7280" }}>security</div>
-                <div className="p-4 rounded font-mono text-[13px]" style={{ backgroundColor: "#0f1117", border: "1px solid #252a3a", borderRadius: "4px" }}>
-                  <div className="flex flex-wrap gap-x-6 gap-y-2">
-                    {report.narrative.chaos_test_summary.inputs_tested != null && (
-                      <span><span style={{ color: "#d4d7e0" }}>{report.narrative.chaos_test_summary.inputs_tested}</span> <span style={{ color: "#4a506a" }}>tested</span></span>
-                    )}
-                    {report.narrative.chaos_test_summary.inputs_rejected != null && (
-                      <span><span style={{ color: "#22c55e" }}>{report.narrative.chaos_test_summary.inputs_rejected}</span> <span style={{ color: "#4a506a" }}>rejected</span></span>
-                    )}
-                    {report.narrative.chaos_test_summary.inputs_accepted_incorrectly != null && (
-                      <span><span style={{ color: report.narrative.chaos_test_summary.inputs_accepted_incorrectly > 0 ? "#ef4444" : "#22c55e" }}>
-                        {report.narrative.chaos_test_summary.inputs_accepted_incorrectly}
-                      </span> <span style={{ color: "#4a506a" }}>accepted incorrectly</span></span>
-                    )}
-                    {report.narrative.chaos_test_summary.server_errors != null && (
-                      <span><span style={{ color: report.narrative.chaos_test_summary.server_errors > 0 ? "#ef4444" : "#22c55e" }}>
-                        {report.narrative.chaos_test_summary.server_errors}
-                      </span> <span style={{ color: "#4a506a" }}>server errors</span></span>
-                    )}
+              {report.narrative?.chaos_test_summary && (
+                <ReportFolder
+                  title="Security / Chaos Testing"
+                  accentColor="#ef4444"
+                  subtitle={`${report.narrative.chaos_test_summary.inputs_tested || 0} inputs tested`}
+                  icon={<Shield size={14} style={{ color: "#ef4444" }} />}
+                  defaultOpen
+                >
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    {[
+                      { label: "Tested", value: report.narrative.chaos_test_summary.inputs_tested, color: "#e2e5ed" },
+                      { label: "Rejected", value: report.narrative.chaos_test_summary.inputs_rejected, color: "#22c55e" },
+                      { label: "Accepted Bad", value: report.narrative.chaos_test_summary.inputs_accepted_incorrectly, color: (report.narrative.chaos_test_summary.inputs_accepted_incorrectly || 0) > 0 ? "#ef4444" : "#22c55e" },
+                      { label: "Server Errors", value: report.narrative.chaos_test_summary.server_errors, color: (report.narrative.chaos_test_summary.server_errors || 0) > 0 ? "#ef4444" : "#22c55e" },
+                    ].filter(item => item.value != null).map((item) => (
+                      <div key={item.label} className="text-center p-2 rounded-lg" style={{ backgroundColor: "rgba(15,17,23,0.4)" }}>
+                        <div className="font-mono text-[22px] font-bold" style={{ color: item.color }}>{item.value}</div>
+                        <div className="font-mono text-[9px] uppercase tracking-[1px] mt-0.5" style={{ color: "#4a506a" }}>{item.label}</div>
+                      </div>
+                    ))}
                   </div>
                   {report.narrative.chaos_test_summary.worst_finding && (
-                    <div className="mt-3 text-[14px]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>
+                    <div className="p-3 rounded-lg text-[12px] leading-relaxed" style={{ backgroundColor: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.1)", color: "#8b90a7", fontFamily: "var(--font-body)" }}>
                       {report.narrative.chaos_test_summary.worst_finding}
                     </div>
                   )}
-                </div>
-              </div>
-            )}
+                </ReportFolder>
+              )}
+            </div>
 
-            {/* Recommendations */}
+            {/* ── Recommendations ── */}
             {report.narrative?.recommendations && report.narrative.recommendations.length > 0 && (
-              <div className="mb-12">
-                <div className="font-mono text-[11px] uppercase tracking-[2px] mb-4" style={{ color: "#4a506a" }}>recommendations</div>
-                <div className="space-y-2">
+              <ReportFolder
+                title="Recommendations"
+                accentColor="#3b82f6"
+                count={report.narrative.recommendations.length}
+                subtitle="Actionable next steps"
+                defaultOpen
+                className="mb-12"
+              >
+                <div className="space-y-2.5">
                   {report.narrative.recommendations.map((rec, i) => (
-                    <div key={i} className="flex gap-3 p-4 rounded" style={{ backgroundColor: "#0f1117", border: "1px solid #252a3a", borderRadius: "4px" }}>
-                      <span className="font-mono text-sm font-bold shrink-0" style={{ color: "#22c55e" }}>{i + 1}.</span>
-                      <span className="text-[14px]" style={{ color: "#d4d7e0", fontFamily: "var(--font-dm-sans)" }}>{rec}</span>
-                    </div>
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                      className="glass-card flex gap-4 p-4"
+                      style={{ borderRadius: "12px" }}
+                    >
+                      <span className="font-mono text-[14px] font-bold shrink-0 w-6 h-6 rounded-md flex items-center justify-center" style={{ color: "#ef4444", backgroundColor: "rgba(239,68,68,0.08)" }}>{typeof rec === "object" ? rec.rank : i + 1}</span>
+                      <div className="flex-1">
+                        <span className="text-[14px] leading-[1.8]" style={{ color: "#e2e5ed", fontFamily: "var(--font-body)" }}>{typeof rec === "object" ? rec.action : rec}</span>
+                        {typeof rec === "object" && rec.impact && (
+                          <span className="block text-[12px] mt-0.5" style={{ color: "#8b90a7" }}>{rec.impact}</span>
+                        )}
+                      </div>
+                    </motion.div>
                   ))}
                 </div>
-              </div>
+              </ReportFolder>
             )}
 
-            {/* Actions */}
-            <div className="h-px mb-8" style={{ backgroundColor: "#252a3a" }} />
-            <div className="flex gap-6 mb-16 font-mono text-xs">
-              <a href="/" className="hover:underline" style={{ color: "#7a8099" }}>test another site</a>
-              <button onClick={() => { navigator.clipboard.writeText(window.location.href); }} className="hover:underline" style={{ color: "#7a8099" }}>
-                share results
+            {/* ── Actions ── */}
+            <div className="h-px mb-8" style={{ backgroundColor: "#1e2232" }} />
+            <div className="flex flex-wrap gap-3 mb-16">
+              <a
+                href="/"
+                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px] no-underline"
+                style={{ color: "#8b90a7", borderRadius: "8px" }}
+              >
+                Test another site
+              </a>
+              <button
+                onClick={handleCopy}
+                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px]"
+                style={{ color: "#8b90a7", borderRadius: "8px" }}
+              >
+                <Copy size={11} />
+                {copied ? "Copied!" : "Share results"}
               </button>
-              <button onClick={() => window.print()} className="hover:underline" style={{ color: "#7a8099" }}>
-                print report
+              <button
+                onClick={() => window.print()}
+                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px]"
+                style={{ color: "#8b90a7", borderRadius: "8px" }}
+              >
+                <Printer size={11} />
+                Print report
               </button>
             </div>
 
             {/* Footer */}
-            <div className="font-mono text-[11px] pb-12" style={{ color: "#4a506a" }}>
-              trashmy.tech &nbsp;--&nbsp; hackillinois 2026
+            <div className="font-mono text-[10px] pb-12" style={{ color: "#1e2232" }}>
+              trashmy.tech · HackIllinois 2026
             </div>
           </motion.div>
         )}
@@ -975,12 +1312,23 @@ export default function TestPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center cursor-pointer"
-            style={{ backgroundColor: "rgba(8,9,13,0.9)" }}
+            className="fixed inset-0 z-[100] flex items-center justify-center cursor-pointer p-8"
+            style={{ backgroundColor: "rgba(8,9,13,0.95)", backdropFilter: "blur(8px)" }}
             onClick={() => setLightboxImg(null)}
           >
-            <img src={lightboxImg} alt="Screenshot"
-              className="max-w-[80vw] max-h-[80vh] rounded" style={{ border: "1px solid #252a3a" }} />
+            <motion.img
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: "spring", damping: 20 }}
+              src={lightboxImg}
+              alt="Screenshot"
+              className="max-w-[85vw] max-h-[85vh] rounded-xl"
+              style={{ border: "1px solid rgba(30,34,50,0.5)", boxShadow: "0 24px 80px rgba(0,0,0,0.6)" }}
+            />
+            <div className="absolute top-6 right-6 font-mono text-[11px] px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(30,34,50,0.4)", color: "#8b90a7" }}>
+              Click anywhere to close
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

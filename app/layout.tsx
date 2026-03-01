@@ -1,21 +1,30 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, DM_Sans } from "next/font/google";
+import { Instrument_Sans, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import { ClientProviders } from "./providers";
 
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains",
+const instrumentSans = Instrument_Sans({
+  variable: "--font-display",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+const sourceSerif = Source_Serif_4({
+  variable: "--font-body",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
   title: "trashmy.tech -- AI Website Stress Testing",
   description:
-    "20 AI personas test your website the way real humans do. Accessibility, security, usability, mobile -- the full report in 60 seconds.",
+    "50 AI personas test your website the way real humans do. Accessibility, security, usability, mobile -- the full report in 60 seconds.",
 };
 
 export default function RootLayout({
@@ -26,10 +35,12 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${jetbrainsMono.variable} ${dmSans.variable} antialiased`}
-        style={{ backgroundColor: "#08090d", color: "#d4d7e0" }}
+        className={`${instrumentSans.variable} ${sourceSerif.variable} ${ibmPlexMono.variable} antialiased`}
+        style={{ backgroundColor: "#0a0a0c", color: "#e8e6e3" }}
       >
-        {children}
+        <ClientProviders>
+          {children}
+        </ClientProviders>
       </body>
     </html>
   );

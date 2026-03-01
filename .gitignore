@@ -44,3 +44,17 @@ next-env.d.ts
 __pycache__/
 *.pyc
 *.pyo
+
+# environment
+backend/.env
+.env
+.env.local
+.env.production
+.env*.local
+
+# vercel
+.vercel
+
+# python
+__pycache__/
+*.pyc

@@ -30,7 +30,8 @@ from browser_utils import (
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are role-playing as a REAL person testing a website.
+You are role-playing as a REAL person stress-testing a website. Your job is to \
+find every flaw, broken interaction, and usability problem.
 
 YOUR IDENTITY:
 - Name: {name}
@@ -41,16 +42,27 @@ YOUR IDENTITY:
 BEHAVIORAL RULES:
 {behavioral_rules}
 
-You will be given the page's visible text (possibly truncated) and a list of
-interactive elements on the page. Decide what action to take NEXT as this
-persona would.
+TESTING GOALS — you are a hardcore tester:
+- Try EVERY interactive element you can find (buttons, links, forms, dropdowns, toggles)
+- Fill out every form field you encounter — test validation by submitting incomplete or wrong data
+- Navigate to different pages/sections — don't just stay on the landing page
+- Scroll to find hidden content below the fold
+- Test error states: submit empty forms, click disabled-looking elements, navigate to broken links
+- Check if the page responds to your actions (did clicking actually do something?)
+- Report when elements are too small, overlapping, or unreachable
+- NEVER say "done" early — exhaust all interactive elements before finishing
+- If you find a form, ALWAYS try to fill it out and submit it
+
+You will be given the page's visible text, interactive elements, console errors, \
+and network errors. Decide what action to take NEXT.
 
 Respond with ONLY valid JSON — no markdown fences, no extra text:
 {{
   "action": "click|type|scroll|back|tab|stuck|done",
   "target": "visible element text, ARIA label, index [N], or CSS selector",
   "value": "text to type (only for type action, otherwise empty string)",
-  "reasoning": "one sentence from this persona's perspective explaining why"
+  "reasoning": "one sentence from this persona's perspective explaining why",
+  "observation": "one sentence noting any UX issue you see (empty if none)"
 }}
 
 IMPORTANT TARGETING TIPS:
@@ -108,11 +120,19 @@ def _build_behavioral_rules(persona: dict) -> str:
     if task == "screen_reader":
         rules.append("You rely entirely on ARIA labels and semantic HTML. If an element has no accessible label you cannot find it.")
     if task == "visual_check":
-        rules.append("You pay close attention to color contrasts and visual design.")
+        rules.append("You pay close attention to color contrasts, visual hierarchy, spacing, typography, and alignment issues.")
     if task == "confused":
         rules.append("You are confused by modern web conventions. Pop-ups, modals, and hamburger menus bewilder you.")
     if task == "power_user":
-        rules.append("You expect keyboard shortcuts and fast load times.")
+        rules.append("You expect keyboard shortcuts and fast load times. You judge sites by their snappiness.")
+    if task == "evaluator":
+        rules.append("You are evaluating this as a professional. You click through projects, check external links, look for a resume/CV, and judge the overall quality. Dead links and missing content are deal-breakers.")
+    if task == "explorer":
+        rules.append("You click EVERY link and button you can find. Your goal is to map the entire site and find broken paths.")
+
+    cat = persona.get("category", "")
+    if cat == "portfolio":
+        rules.append("You are specifically testing a portfolio/personal website. Look for: working project links, contact forms, responsive design, professional presentation, and complete content.")
 
     return "\n".join(f"- {r}" for r in rules) if rules else "- Act naturally."
 
@@ -128,14 +148,14 @@ async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.models.generate_content,
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents=full_prompt,
                 config=GenerateContentConfig(
-                    temperature=0.7,
-                    max_output_tokens=300,
+                    temperature=0.6,
+                    max_output_tokens=500,
                 ),
             ),
-            timeout=30,
+            timeout=45,
         )
         raw = response.text.strip()
         if raw.startswith("```"):
@@ -558,8 +578,12 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
             return _make_result(persona, steps, all_errors, dead_ends, findings,
                               form_test_results, tool_limitations, False, session_start, url, 0)
 
-        # Agent loop — up to 12 steps
-        max_steps = 12
+        # Agent loop — up to 20 steps for thorough testing
+        max_steps = 20
+        previous_actions: list[str] = []
+        accumulated_console_errors: list[str] = []
+        accumulated_network_errors: list[dict] = []
+
         for step_num in range(max_steps):
             await _inject_overlays(page, headed, persona)
 
@@ -567,11 +591,41 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
             elements = await build_interaction_map(page)
             page_state = await extract_page_state(page)
 
+            # Build rich context with history and errors
+            history_str = ""
+            if previous_actions:
+                history_str = "YOUR PREVIOUS ACTIONS THIS SESSION:\n"
+                for pa in previous_actions[-6:]:
+                    history_str += f"  {pa}\n"
+                history_str += "\nDo NOT repeat the same action on the same target. Explore NEW elements.\n\n"
+
+            error_context = ""
+            if console_errors:
+                accumulated_console_errors.extend(console_errors)
+                error_context += f"CONSOLE ERRORS DETECTED:\n"
+                for ce in console_errors[-5:]:
+                    error_context += f"  {ce}\n"
+                error_context += "\n"
+            if network_errors:
+                accumulated_network_errors.extend(network_errors)
+                error_context += f"NETWORK ERRORS:\n"
+                for ne in network_errors[-5:]:
+                    error_context += f"  {ne['url'][:80]} → HTTP {ne['status']}\n"
+                error_context += "\n"
+
+            elements_str = format_elements_for_llm(elements)
+            element_count = len(elements)
+
             user_prompt = (
-                f"CURRENT URL: {page.url}\n\n"
-                f"VISIBLE TEXT:\n{page_state['visible_text']}\n\n"
-                f"INTERACTIVE ELEMENTS:\n{format_elements_for_llm(elements)}\n\n"
-                f"Step {step_num + 1} of {max_steps}. What do you do next?"
+                f"CURRENT URL: {page.url}\n"
+                f"PAGE TITLE: {page_state.get('title', 'N/A')}\n\n"
+                f"{history_str}"
+                f"{error_context}"
+                f"VISIBLE TEXT (first 2000 chars):\n{page_state['visible_text'][:2000]}\n\n"
+                f"INTERACTIVE ELEMENTS ({element_count} found):\n{elements_str}\n\n"
+                f"Step {step_num + 1} of {max_steps}. "
+                f"You have tested {len(previous_actions)} actions so far. "
+                f"Explore thoroughly — try new elements you haven't interacted with yet. What do you do next?"
             )
 
             decision = await _ask_llm(model, system_prompt, user_prompt)
@@ -583,12 +637,20 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
             # Execute action with smart clicking
             exec_result = await _execute_action(page, decision, persona, elements, headed)
 
+            # Track action history for dedup
+            action_summary = f"Step {step_num+1}: {decision.get('action')} → '{decision.get('target', '')[:50]}'"
+            if decision.get("value"):
+                action_summary += f" (typed: '{decision.get('value', '')[:30]}')"
+            action_summary += f" → {'OK' if exec_result['executed'] else 'FAILED'}"
+            previous_actions.append(action_summary)
+
             step_record = {
                 "step_number": step_num + 1,
                 "action": decision.get("action"),
                 "target_element": decision.get("target", ""),
                 "value": decision.get("value", ""),
                 "reasoning": decision.get("reasoning", ""),
+                "observation": decision.get("observation", ""),
                 "target_size_px": exec_result.get("target_size", {"width": 0, "height": 0}),
                 "result": "success" if exec_result["executed"] else exec_result.get("error", "failed"),
                 "click_strategy": exec_result.get("click_strategy"),
@@ -658,6 +720,18 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
             if exec_result.get("finding"):
                 findings.append({
                     **exec_result["finding"],
+                    "evidence_step": step_num + 1,
+                    "is_site_bug": True,
+                })
+
+            # Capture LLM observations as findings
+            observation = decision.get("observation", "")
+            if observation and observation.strip():
+                findings.append({
+                    "type": "minor",
+                    "category": "usability",
+                    "title": f"Agent observation: {observation[:80]}",
+                    "detail": f"{persona['name']} noted: {observation}",
                     "evidence_step": step_num + 1,
                     "is_site_bug": True,
                 })

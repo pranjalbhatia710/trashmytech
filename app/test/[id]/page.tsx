@@ -3,7 +3,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { API_URL, WS_URL } from "@/lib/config";
+
+const NeuralBackground = dynamic(
+  () => import("@/components/ui/flow-field-background"),
+  { ssr: false }
+);
 import { useScene } from "@/components/three/SceneContext";
 import CounterLoader from "@/components/ui/counter-loader";
 import { ScoreCard } from "@/components/ui/score-card";
@@ -166,6 +172,7 @@ function catColor(cat: string) {
     case "usability": return "var(--cat-usability)";
     case "mobile": return "var(--cat-mobile)";
     case "performance": return "var(--cat-performance)";
+    case "portfolio": return "var(--accent)";
     default: return "var(--text-muted)";
   }
 }
@@ -459,10 +466,21 @@ export default function TestPage() {
   };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "var(--bg-base)" }}>
+    <div className="min-h-screen relative" style={{ backgroundColor: "var(--bg-base)" }}>
+      {/* Subtle flow field — theme continuity */}
+      <div className="fixed inset-0 z-0 opacity-[0.3]">
+        <NeuralBackground color="#e8a44a" trailOpacity={0.06} particleCount={200} speed={0.3} />
+      </div>
+      <div
+        className="fixed inset-0 z-[1] pointer-events-none"
+        style={{
+          background: "radial-gradient(ellipse at 50% 30%, transparent 0%, rgba(10,10,12,0.6) 40%, rgba(10,10,12,0.95) 100%)",
+        }}
+      />
+
       {/* Header */}
       <header
-        className="sticky top-0 z-50 px-6 sm:px-8 py-4 flex items-center justify-between"
+        className="sticky top-0 z-50 px-6 sm:px-8 py-4 flex items-center justify-between relative"
         style={{
           backgroundColor: "rgba(10,10,12,0.85)",
           backdropFilter: "blur(16px)",
@@ -505,7 +523,7 @@ export default function TestPage() {
         </div>
       </header>
 
-      <main className="px-4 sm:px-6 py-6">
+      <main className="px-4 sm:px-6 py-6 relative z-10">
         {/* URL banner */}
         <div className="max-w-[760px] mx-auto mb-6">
           <div

@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageFont
 from google import genai
 from google.genai import types
 
-ANNOTATION_MODEL = "gemini-3-flash-preview"
+ANNOTATION_MODEL = "gemini-2.5-flash"
 
 ANNOTATION_PROMPT = """You are a UX auditor annotating a screenshot of a website.
 

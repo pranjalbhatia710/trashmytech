@@ -13,8 +13,8 @@ from annotator import annotate_overview_screenshot
 # ---------------------------------------------------------------------------
 # Model strategy — one API key, two models
 # ---------------------------------------------------------------------------
-REPORT_MODEL = "gemini-3.1-pro-preview"       # max reasoning for scored report
-ANNOTATION_MODEL = "gemini-3-flash-preview"    # fast vision for bounding boxes
+REPORT_MODEL = "gemini-2.5-pro"                # max reasoning for scored report
+ANNOTATION_MODEL = "gemini-2.5-flash"          # fast vision for bounding boxes
 
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated
@@ -242,24 +242,44 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
         for tl in s.get("tool_limitations", []):
             tool_limitations.append(tl)
 
-    # Summarize sessions for prompt (no screenshots)
+    # Summarize sessions for prompt — include ALL step data for accuracy
     def _summarize_session(s):
         p = s.get("persona", {})
         steps_summary = []
-        for step in s.get("steps", [])[:12]:
+        all_console_errors = []
+        all_network_errors = []
+        for step in s.get("steps", [])[:20]:
             step_data = {
                 "step": step.get("step_number"),
                 "action": step.get("action"),
-                "target": step.get("target_element", "")[:60],
-                "result": step.get("result", "")[:100],
+                "target": step.get("target_element", "")[:80],
+                "result": step.get("result", "")[:150],
                 "target_size": step.get("target_size_px"),
                 "timestamp_ms": step.get("timestamp_ms"),
                 "click_strategy": step.get("click_strategy"),
+                "page_url_after": step.get("page_url_after", ""),
+                "reasoning": step.get("reasoning", "")[:100],
+                "observation": step.get("observation", "")[:150],
             }
             fc = step.get("failure_classification")
             if fc:
                 step_data["failure_type"] = fc.get("type", "")
                 step_data["is_site_bug"] = fc.get("is_site_bug", False)
+                step_data["failure_reason"] = fc.get("reason", "")[:100]
+
+            # Collect console/network errors per step
+            console_errs = step.get("console_errors_new", [])
+            network_errs = step.get("network_errors_new", [])
+            if console_errs:
+                step_data["console_errors"] = console_errs[:3]
+                all_console_errors.extend(console_errs)
+            if network_errs:
+                step_data["network_errors"] = [
+                    {"url": e.get("url", "")[:80], "status": e.get("status")}
+                    for e in network_errs[:3]
+                ]
+                all_network_errors.extend(network_errs)
+
             steps_summary.append(step_data)
 
         return {
@@ -271,12 +291,20 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             "outcome": s.get("outcome"),
             "task_completed": s.get("task_completed", False),
             "total_time_ms": s.get("total_time_ms", 0),
+            "steps_taken": s.get("steps_taken", len(steps_summary)),
             "steps": steps_summary,
-            "findings": [f for f in s.get("findings", [])[:10] if f.get("is_site_bug", True)],
+            "findings": [f for f in s.get("findings", [])[:15] if f.get("is_site_bug", True)],
             "tool_limitations_count": len(s.get("tool_limitations", [])),
             "form_test_results": s.get("form_test_results", [])[:10],
             "dead_ends": s.get("dead_ends", [])[:5],
             "errors": s.get("errors", [])[:5],
+            "console_errors_total": len(all_console_errors),
+            "console_errors_sample": all_console_errors[:5],
+            "network_errors_total": len(all_network_errors),
+            "network_errors_sample": [
+                {"url": e.get("url", "")[:80], "status": e.get("status")}
+                for e in all_network_errors[:5]
+            ],
         }
 
     # Build payload
@@ -353,8 +381,8 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             config=GenerateContentConfig(
                 system_instruction=GEMINI_REPORT_PROMPT,
                 response_mime_type="application/json",
-                thinking_config={"thinking_budget": 4096},
-                max_output_tokens=8000,
+                thinking_config={"thinking_budget": 8192},
+                max_output_tokens=12000,
             ),
         )
 

@@ -290,11 +290,153 @@ PERSONAS = [
             "uses_back_button": False, "refreshes_randomly": False,
         },
     },
+
+    # ── PORTFOLIO / HARDCORE (10) ──────────────────────────────
+    {
+        "id": "P1", "name": "HiringManager", "age": 42,
+        "category": "portfolio",
+        "description": "VP of Engineering reviewing your portfolio to decide on an interview. Clicks projects, checks links, judges load time.",
+        "avatar_emoji": "👔", "task_style": "evaluator",
+        "viewport": {"width": 1440, "height": 900},
+        "behavioral_modifiers": {
+            "click_delay_ms": 400, "misclick_rate": 0.02,
+            "reads_everything": True, "skips_text": False,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 10000, "double_clicks": False,
+            "uses_back_button": True, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P2", "name": "RecruiterRita", "age": 29,
+        "category": "portfolio",
+        "description": "Tech recruiter who has 30 seconds per portfolio. Scans for contact info, GitHub link, and resume download.",
+        "avatar_emoji": "📋", "task_style": "speed_scan",
+        "viewport": {"width": 1280, "height": 720},
+        "behavioral_modifiers": {
+            "click_delay_ms": 150, "misclick_rate": 0.05,
+            "reads_everything": False, "skips_text": True,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 8000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P3", "name": "MobileRecruiter", "age": 34,
+        "category": "portfolio",
+        "description": "Recruiter reviewing portfolios on their phone during commute. Tests responsive design, touch targets, scrolling.",
+        "avatar_emoji": "🚇", "task_style": "mobile_thumb",
+        "viewport": {"width": 375, "height": 812},
+        "behavioral_modifiers": {
+            "click_delay_ms": 300, "misclick_rate": 0.15,
+            "reads_everything": False, "skips_text": True,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 12000, "double_clicks": False,
+            "uses_back_button": True, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P4", "name": "DesignCritic", "age": 31,
+        "category": "portfolio",
+        "description": "Senior UI designer who judges visual hierarchy, spacing, typography, and color contrast harshly.",
+        "avatar_emoji": "🎨", "task_style": "visual_check",
+        "viewport": {"width": 1920, "height": 1080},
+        "behavioral_modifiers": {
+            "click_delay_ms": 800, "misclick_rate": 0.01,
+            "reads_everything": True, "skips_text": False,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 45000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P5", "name": "LinkChecker", "age": None,
+        "category": "portfolio",
+        "description": "Automated bot that clicks every single link and button to find 404s, broken anchors, and dead ends.",
+        "avatar_emoji": "🔗", "task_style": "explorer",
+        "viewport": {"width": 1280, "height": 720},
+        "behavioral_modifiers": {
+            "click_delay_ms": 100, "misclick_rate": 0.0,
+            "reads_everything": False, "skips_text": True,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 60000, "double_clicks": False,
+            "uses_back_button": True, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P6", "name": "SlowConnection", "age": 38,
+        "category": "portfolio",
+        "description": "User on a slow 3G connection in rural area. Everything takes forever. Tests if the site is usable with slow loading.",
+        "avatar_emoji": "🐌", "task_style": "slow_careful",
+        "viewport": {"width": 1280, "height": 720},
+        "behavioral_modifiers": {
+            "click_delay_ms": 2000, "misclick_rate": 0.05,
+            "reads_everything": True, "skips_text": False,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 60000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": True,
+        },
+    },
+    {
+        "id": "P7", "name": "TabHoarder", "age": 26,
+        "category": "portfolio",
+        "description": "Opens every project in a new tab, right-clicks everything, tests if links open correctly.",
+        "avatar_emoji": "📑", "task_style": "explorer",
+        "viewport": {"width": 1440, "height": 900},
+        "behavioral_modifiers": {
+            "click_delay_ms": 200, "misclick_rate": 0.03,
+            "reads_everything": False, "skips_text": False,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 30000, "double_clicks": False,
+            "uses_back_button": True, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P8", "name": "ContactFormTester", "age": None,
+        "category": "portfolio",
+        "description": "Specifically targets contact forms and submission flows. Tries empty submissions, invalid emails, XSS payloads.",
+        "avatar_emoji": "📧", "task_style": "adversarial",
+        "viewport": {"width": 1280, "height": 720},
+        "behavioral_modifiers": {
+            "click_delay_ms": 200, "misclick_rate": 0.0,
+            "reads_everything": False, "skips_text": True,
+            "keyboard_only": False, "input_strategy": "adversarial",
+            "patience_threshold_ms": 30000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P9", "name": "A11yAuditor", "age": 45,
+        "category": "portfolio",
+        "description": "Accessibility expert who tabs through the entire page, checks focus order, ARIA labels, and heading hierarchy.",
+        "avatar_emoji": "♿", "task_style": "screen_reader",
+        "viewport": {"width": 1280, "height": 720},
+        "behavioral_modifiers": {
+            "click_delay_ms": 400, "misclick_rate": 0.0,
+            "reads_everything": True, "skips_text": False,
+            "keyboard_only": True, "input_strategy": "normal",
+            "patience_threshold_ms": 60000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": False,
+        },
+    },
+    {
+        "id": "P10", "name": "WidescreenDev", "age": 27,
+        "category": "portfolio",
+        "description": "Developer on an ultrawide 4K monitor. Tests if the layout stretches or breaks at extreme widths.",
+        "avatar_emoji": "🖥️", "task_style": "power_user",
+        "viewport": {"width": 2560, "height": 1440},
+        "behavioral_modifiers": {
+            "click_delay_ms": 150, "misclick_rate": 0.01,
+            "reads_everything": False, "skips_text": False,
+            "keyboard_only": False, "input_strategy": "normal",
+            "patience_threshold_ms": 15000, "double_clicks": False,
+            "uses_back_button": False, "refreshes_randomly": False,
+        },
+    },
 ]
 
 ADVERSARIAL_INPUTS = [
     "Robert'); DROP TABLE users;--",
-    "🍕🍕🍕",
+    "🍕🍕🍕🔥💀",
     "<script>alert('xss')</script>",
     "",
     "not-an-email",
@@ -308,17 +450,36 @@ ADVERSARIAL_INPUTS = [
     "test@test.com\nBcc: spam@evil.com",
     "../../etc/passwd",
     "99999999999999999999",
+    "<svg onload=alert(1)>",
+    "javascript:alert(1)",
+    "{{7*7}}",
+    "${7*7}",
+    "admin@admin.com",
+    " ",
+    "\t\n",
+    "test'test",
+    'test"test',
+    "SELECT * FROM users",
+    "<h1>injected</h1>",
+    "file:///etc/passwd",
+    "%00",
+    "a]@a.com",
+    "test@",
+    "@test.com",
 ]
 
 
-def sample_personas(n: int = 15) -> list[dict]:
-    """Pick n personas ensuring at least 1 per category."""
-    categories = ["accessibility", "demographic", "chaos", "behavioral"]
+def sample_personas(n: int = 20) -> list[dict]:
+    """Pick n personas ensuring at least 1 per category. Default 20 for thorough testing."""
+    categories = ["accessibility", "demographic", "chaos", "behavioral", "portfolio"]
     selected = []
 
     for cat in categories:
         pool = [p for p in PERSONAS if p["category"] == cat]
-        selected.append(random.choice(pool))
+        if pool:
+            # Pick at least 2 per category if available
+            count = min(2, len(pool))
+            selected.extend(random.sample(pool, count))
 
     remaining = [p for p in PERSONAS if p not in selected]
     extra = min(n - len(selected), len(remaining))

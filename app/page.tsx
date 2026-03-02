@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { motion, AnimatePresence, useInView } from "framer-motion";
+import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Zap, Eye, Shield, Smartphone, Gauge, Bot, Sparkles, Copy, Monitor } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { TrashAnimation } from "@/components/ui/trash-animation";
 import { Typewriter } from "@/components/ui/typewriter-text";
 import dynamic from "next/dynamic";
@@ -13,59 +13,6 @@ const NeuralBackground = dynamic(
   { ssr: false }
 );
 
-const CATEGORIES = [
-  { label: "Accessibility", icon: Eye, color: "var(--cat-accessibility)" },
-  { label: "Security", icon: Shield, color: "var(--cat-security)" },
-  { label: "Usability", icon: Zap, color: "var(--cat-usability)" },
-  { label: "Mobile", icon: Smartphone, color: "var(--cat-mobile)" },
-  { label: "Performance", icon: Gauge, color: "var(--cat-performance)" },
-  { label: "AI Readability", icon: Bot, color: "var(--cat-ai-seo)" },
-];
-
-const FEATURES = [
-  {
-    icon: Monitor,
-    title: "10 real Chromium browsers",
-    desc: "Watch AI agents browse your site live — every click, scroll, and form fill streamed in real-time.",
-  },
-  {
-    icon: Eye,
-    title: "Gemini Vision annotations",
-    desc: "AI analyzes your screenshots and draws bounding boxes on problems — red for bugs, green for what works.",
-  },
-  {
-    icon: Copy,
-    title: "Copy-paste fix prompt",
-    desc: "Every issue synthesized into one prompt. Paste into ChatGPT, Claude, or Cursor for instant code fixes.",
-  },
-];
-
-function catColor(cat: string) {
-  switch (cat) {
-    case "accessibility": return "var(--cat-accessibility)";
-    case "security": return "var(--cat-security)";
-    case "mobile": return "var(--cat-mobile)";
-    case "usability": return "var(--cat-usability)";
-    case "performance": return "var(--cat-performance)";
-    default: return "var(--text-muted)";
-  }
-}
-
-function Reveal({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: "-40px" });
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, y: 24 }}
-      animate={inView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.6, delay, ease: [0.16, 1, 0.3, 1] }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  );
-}
 
 export default function Home() {
   const [url, setUrl] = useState("");
@@ -374,128 +321,8 @@ export default function Home() {
               )}
             </AnimatePresence>
 
-            {/* Category pills */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4, delay: 0.6 }}
-              className="flex flex-wrap justify-center gap-2 mb-6"
-            >
-              {CATEGORIES.map((c) => {
-                const Icon = c.icon;
-                return (
-                  <div
-                    key={c.label}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium"
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      backgroundColor: "rgba(255,255,255,0.03)",
-                      border: "1px solid var(--border-default)",
-                      color: c.color,
-                    }}
-                  >
-                    <Icon size={10} />
-                    <span>{c.label}</span>
-                  </div>
-                );
-              })}
-            </motion.div>
-          </div>
-
-          {/* ── Features — below the fold ── */}
-          <div className="max-w-[620px] w-full mt-12 text-center">
-            <Reveal delay={0}>
-              <div className="mb-14">
-                <div className="flex items-center justify-center gap-3 mb-6">
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
-                  <div className="section-label">What You Get</div>
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
-                </div>
-                <div className="space-y-4 text-left">
-                  {FEATURES.map((f, i) => {
-                    const Icon = f.icon;
-                    return (
-                      <Reveal key={f.title} delay={i * 0.08}>
-                        <div
-                          className="flex items-start gap-4 p-4 rounded-lg transition-colors duration-150"
-                          style={{ border: "1px solid var(--border-default)", backgroundColor: "rgba(255,255,255,0.01)" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(232,164,74,0.2)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
-                        >
-                          <div
-                            className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 mt-0.5"
-                            style={{ backgroundColor: "rgba(232,164,74,0.08)", border: "1px solid rgba(232,164,74,0.15)" }}
-                          >
-                            <Icon size={14} style={{ color: "var(--accent)" }} />
-                          </div>
-                          <div>
-                            <div className="text-[13px] font-semibold mb-0.5" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                              {f.title}
-                            </div>
-                            <div className="text-[12px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                              {f.desc}
-                            </div>
-                          </div>
-                        </div>
-                      </Reveal>
-                    );
-                  })}
-                </div>
-              </div>
-            </Reveal>
-
-            {/* How it works — minimal numbered steps */}
-            <Reveal delay={0.1}>
-              <div className="mb-14">
-                <div className="flex items-center justify-center gap-3 mb-6">
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
-                  <div className="section-label">How it Works</div>
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
-                </div>
-                <div className="flex gap-0">
-                  {[
-                    { step: "1", label: "Paste URL", desc: "We crawl the page, map every link, form, and button" },
-                    { step: "2", label: "AI agents test", desc: "10 personas open real browsers and interact with your site" },
-                    { step: "3", label: "Get results", desc: "Score, annotated screenshots, and a fix prompt you can copy" },
-                  ].map((s, i) => (
-                    <div key={s.step} className="flex-1 text-center px-3">
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center mx-auto mb-2.5 text-[12px] font-bold"
-                        style={{ fontFamily: "var(--font-mono)", color: "var(--accent)", backgroundColor: "rgba(232,164,74,0.08)", border: "1px solid rgba(232,164,74,0.2)" }}
-                      >
-                        {s.step}
-                      </div>
-                      <div className="text-[12px] font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                        {s.label}
-                      </div>
-                      <div className="text-[11px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                        {s.desc}
-                      </div>
-                      {i < 2 && (
-                        <div className="hidden sm:block absolute" />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </Reveal>
           </div>
         </main>
-
-        {/* Footer */}
-        <motion.footer
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.2 }}
-          className="px-6 sm:px-8 py-5 flex items-center justify-between"
-        >
-          <span className="text-[10px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-            Built at HackIllinois 2026
-          </span>
-          <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>
-            v2.0
-          </span>
-        </motion.footer>
       </div>
     </div>
   );

@@ -30,7 +30,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-AGENT_COUNT = int(os.getenv("AGENT_COUNT", "5"))  # Default 5, scale to 20
+AGENT_COUNT = int(os.getenv("AGENT_COUNT", "15"))  # Default 15, scale to 30
 USE_MODAL = os.getenv("USE_MODAL", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------

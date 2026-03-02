@@ -23,7 +23,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Shield, Eye, Smartphone, Gauge, Users, AlertTriangle,
+  Shield, Eye, Smartphone, Gauge, Users, AlertTriangle, Bot, Check, X,
   CheckCircle2, XCircle, ChevronDown, ExternalLink, Copy, Printer, Sparkles,
 } from "lucide-react";
 import { LiveBrowserViewer } from "@/components/ui/live-browser-viewer";
@@ -84,7 +84,8 @@ interface CrawlData {
 
 interface CategoryScore {
   score: number;
-  reasoning: string;
+  reasoning?: string;
+  one_liner?: string;
   key_evidence?: string[];
 }
 
@@ -153,6 +154,12 @@ interface Report {
   }>;
   fix_prompt?: string;
   annotated_screenshot_url?: string;
+  annotated_screenshot_b64?: string;
+  ai_seo?: {
+    checks?: Array<{ name: string; pass: boolean; detail: string }>;
+    ai_readability_score?: number;
+    [key: string]: unknown;
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -204,6 +211,7 @@ const CAT_ICONS: Record<string, any> = {
   usability: Users,
   mobile: Smartphone,
   performance: Gauge,
+  ai_readability: Bot,
 };
 
 const CAT_COLORS: Record<string, string> = {
@@ -212,6 +220,16 @@ const CAT_COLORS: Record<string, string> = {
   usability: "var(--cat-usability)",
   mobile: "var(--cat-mobile)",
   performance: "var(--cat-performance)",
+  ai_readability: "var(--cat-ai-seo)",
+};
+
+const CAT_LABELS: Record<string, string> = {
+  accessibility: "Accessibility",
+  security: "Security",
+  usability: "Usability",
+  mobile: "Mobile",
+  performance: "Performance",
+  ai_readability: "AI Readability",
 };
 
 // ── Component ──────────────────────────────────────────────────
@@ -916,728 +934,290 @@ export default function TestPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-            className="max-w-[760px] mx-auto mt-4"
+            className="max-w-[680px] mx-auto mt-4 pb-16"
           >
             {/* ── Score Hero ── */}
-            <div className="mb-12 text-center">
+            <div className="mb-16 text-center">
               <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12, delay: 0.15 }}>
-                <div className="inline-block relative">
-                  <span
-                    className="font-mono text-[80px] font-bold leading-none"
-                    style={{
-                      color: scoreColor(report.score?.overall ?? 0),
-                      textShadow: `0 0 40px ${scoreColor(report.score?.overall ?? 0)}30`,
-                    }}
-                  >
-                    {animatedScore}
-                  </span>
-                  <span className="font-mono text-[28px] ml-1" style={{ color: "var(--border-default)" }}>/100</span>
-                </div>
+                <span
+                  className="text-[96px] font-bold leading-none tracking-tighter"
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    color: scoreColor(report.score?.overall ?? 0),
+                  }}
+                >
+                  {animatedScore}
+                </span>
               </motion.div>
-              {report.score?.confidence != null && (
-                <div className="font-mono text-[10px] uppercase tracking-[3px] mt-3" style={{ color: "var(--text-muted)" }}>
-                  {report.score.confidence > 0.7 ? "High" : report.score.confidence > 0.4 ? "Moderate" : "Low"} Confidence
-                </div>
-              )}
-              <div className="flex items-center justify-center gap-3 font-mono text-[11px] mt-4">
-                {[
-                  { label: `${report.stats?.total || 0} personas`, color: "var(--text-secondary)" },
-                  { label: `${issueCount} issues`, color: issueCount > 5 ? "var(--status-fail)" : "var(--text-secondary)" },
-                  { label: `${elapsed}s`, color: "var(--text-secondary)" },
-                ].map((stat, i) => (
-                  <span key={i} className="flex items-center gap-3">
-                    {i > 0 && <span style={{ color: "var(--border-default)" }}>·</span>}
-                    <span style={{ color: stat.color }}>{stat.label}</span>
-                  </span>
-                ))}
-              </div>
               {report.score?.reasoning && (
-                <p className="text-[16px] leading-[1.8] mt-6 max-w-[560px] mx-auto" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                <p className="text-[15px] leading-[1.7] mt-5 max-w-[520px] mx-auto" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
                   {report.score.reasoning}
                 </p>
               )}
+              <div className="flex items-center justify-center gap-4 text-[11px] mt-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                <span>{report.stats?.total || 0} personas</span>
+                <span style={{ color: "var(--border-default)" }}>/</span>
+                <span style={{ color: issueCount > 5 ? "var(--status-fail)" : "var(--text-muted)" }}>{issueCount} issues</span>
+                <span style={{ color: "var(--border-default)" }}>/</span>
+                <span>{elapsed}s</span>
+              </div>
             </div>
 
-            {/* ── Quick Stats Overview ── */}
-            <StatsCard
-              title="Test Overview"
-              className="mb-8"
-              accentColor="var(--accent)"
-              stats={[
-                { label: "Personas", value: report.stats?.total || 0 },
-                { label: "Completed", value: report.stats?.completed || 0, change: report.stats?.total ? `${Math.round(((report.stats.completed || 0) / report.stats.total) * 100)}%` : undefined, changeType: "positive" },
-                { label: "Issues Found", value: issueCount, changeType: issueCount > 5 ? "negative" : "neutral" },
-                { label: "Time", value: `${elapsed}s` },
-              ]}
-            />
-
-            {/* ── Category Scores with Animated Bars ── */}
+            {/* ── Category Scores — clean horizontal ── */}
             {report.category_scores && (
               <TooltipProvider delayDuration={100}>
-                <div className="mb-12">
-                  <div className="font-mono text-[10px] uppercase tracking-[3px] mb-5" style={{ color: "var(--text-muted)" }}>Category Breakdown</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                    {(["accessibility", "security", "usability", "mobile", "performance"] as const).map((cat, idx) => {
+                <div className="mb-16">
+                  <div className="space-y-4">
+                    {(["accessibility", "security", "usability", "mobile", "performance", "ai_readability"] as const).map((cat, idx) => {
                       const cs = report.category_scores?.[cat];
                       if (!cs) return null;
                       const Icon = CAT_ICONS[cat] || Shield;
                       const color = CAT_COLORS[cat] || "var(--text-muted)";
+                      const label = CAT_LABELS[cat] || cat;
                       return (
                         <Tooltip key={cat}>
                           <TooltipTrigger asChild>
                             <motion.div
-                              initial={{ opacity: 0, y: 12 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: idx * 0.06, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                              className="glass-card glass-card-hover p-4 text-center cursor-default"
-                              style={{ borderRadius: "12px" }}
+                              initial={{ opacity: 0, x: -12 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.05, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                              className="cursor-default"
                             >
-                              <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: `${color}12` }}>
-                                <Icon size={15} style={{ color }} />
+                              <div className="flex items-center justify-between mb-1.5">
+                                <div className="flex items-center gap-2.5">
+                                  <Icon size={13} style={{ color }} />
+                                  <span className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>{label}</span>
+                                </div>
+                                <span className="text-[13px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-display)", color: scoreColor(cs.score) }}>
+                                  {cs.score}
+                                </span>
                               </div>
-                              <div className="font-mono text-[24px] font-bold" style={{ color: scoreColor(cs.score), textShadow: `0 0 20px ${scoreColor(cs.score)}20` }}>
-                                {cs.score}
-                              </div>
-                              <div className="font-mono text-[9px] uppercase tracking-[1px] mt-1.5" style={{ color }}>
-                                {cat}
-                              </div>
-                              <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(30,34,50,0.5)" }}>
+                              <div className="h-[3px] rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
                                 <motion.div
                                   className="h-full rounded-full"
                                   style={{ backgroundColor: scoreColor(cs.score) }}
                                   initial={{ width: 0 }}
                                   animate={{ width: `${cs.score}%` }}
-                                  transition={{ duration: 1, delay: 0.3 + idx * 0.1, ease: [0.16, 1, 0.3, 1] }}
+                                  transition={{ duration: 0.8, delay: 0.2 + idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
                                 />
                               </div>
                             </motion.div>
                           </TooltipTrigger>
-                          <TooltipContent className="max-w-[260px]">
-                            <p className="font-mono text-[11px] font-semibold mb-1.5" style={{ color: "var(--text-primary)" }}>{cat} — {cs.score}/100</p>
-                            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{cs.reasoning}</p>
-                            {cs.key_evidence && cs.key_evidence.length > 0 && (
-                              <div className="mt-2 space-y-0.5">
-                                {cs.key_evidence.map((e, i) => (
-                                  <div key={i} className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>• {e}</div>
-                                ))}
-                              </div>
-                            )}
+                          <TooltipContent className="max-w-[280px]">
+                            <p className="text-[11px] font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{label} — {cs.score}/100</p>
+                            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{cs.reasoning || cs.one_liner}</p>
                           </TooltipContent>
                         </Tooltip>
                       );
                     })}
                   </div>
-
-                  {/* SparkLine overview */}
-                  <div className="glass-card mt-4 p-4 flex items-center justify-between" style={{ borderRadius: "10px" }}>
-                    <div className="font-mono text-[10px] uppercase tracking-[1px]" style={{ color: "var(--text-muted)" }}>Score Distribution</div>
-                    <SparkLine
-                      data={(["accessibility", "security", "usability", "mobile", "performance"] as const).map(c => report.category_scores?.[c]?.score || 0)}
-                      width={200}
-                      height={40}
-                      color="var(--accent)"
-                    />
-                  </div>
                 </div>
               </TooltipProvider>
             )}
 
-            {/* ── Executive Summary ── */}
+            {/* ── Summary ── */}
             {report.narrative?.executive_summary && (
-              <div className="mb-12">
-                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="font-mono text-[10px] uppercase tracking-[3px] mb-4" style={{ color: "var(--text-muted)" }}>Executive Summary</div>
-                <div className="glass-card p-6" style={{ borderRadius: "12px" }}>
-                  <p className="text-[16px] leading-[1.9]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
-                    {report.narrative.executive_summary}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* ── What Works / What Doesn't ── */}
-            {(report.narrative?.what_works?.length || report.narrative?.what_doesnt_work?.length) ? (
-              <div className="grid sm:grid-cols-2 gap-4 mb-12">
-                {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
-                  <ReportFolder
-                    title="What Works"
-                    accentColor="var(--status-pass)"
-                    count={report.narrative.what_works.length}
-                    icon={<CheckCircle2 size={14} style={{ color: "var(--status-pass)" }} />}
-                    defaultOpen
-                  >
-                    <div className="space-y-4">
-                      {report.narrative.what_works.map((w, i) => (
-                        <div key={i} className="pl-3" style={{ borderLeft: "2px solid rgba(34,197,94,0.2)" }}>
-                          <div className="text-[14px] font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>{w.title}</div>
-                          <div className="text-[13px] mt-1 leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{w.detail}</div>
-                          {w.personas_who_benefited && (
-                            <div className="font-mono text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-                              {w.personas_who_benefited.join(" · ")}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </ReportFolder>
-                )}
-                {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (
-                  <ReportFolder
-                    title="What Doesn't Work"
-                    accentColor="var(--accent)"
-                    count={report.narrative.what_doesnt_work.length}
-                    icon={<XCircle size={14} style={{ color: "var(--accent)" }} />}
-                    defaultOpen
-                  >
-                    <div className="space-y-4">
-                      {report.narrative.what_doesnt_work.map((w, i) => (
-                        <div key={i} className="pl-3" style={{ borderLeft: "2px solid rgba(232,164,74,0.2)" }}>
-                          <div className="text-[14px] font-semibold" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>{w.title}</div>
-                          <div className="text-[13px] mt-1 leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{w.detail}</div>
-                          {w.personas_who_suffered && (
-                            <div className="font-mono text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-                              {w.personas_who_suffered.join(" · ")}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </ReportFolder>
-                )}
-              </div>
-            ) : null}
-
-            {/* ── Persona Verdicts ── */}
-            {report.narrative?.persona_verdicts && report.narrative.persona_verdicts.length > 0 && (
-              <div className="mb-12">
-                <div className="font-mono text-[10px] uppercase tracking-[3px] mb-5" style={{ color: "var(--text-muted)" }}>Persona Results</div>
-
-                {/* Summary row */}
-                <ScoreCard
-                  className="mb-4"
-                  title="Agent Overview"
-                  headerIcon={<Users size={14} />}
-                  stats={[
-                    { title: "Completed", value: report.stats?.completed || 0 },
-                    { title: "Struggled", value: report.stats?.struggled || 0 },
-                    { title: "Blocked", value: report.stats?.blocked || 0, changePercent: report.stats?.blocked ? Math.round((report.stats.blocked / (report.stats?.total || 1)) * 100) : 0, changeDirection: "down" as const },
-                  ]}
-                  graphData={report.narrative.persona_verdicts.map((pv) => ({
-                    label: (pv.persona_name || pv.name || "Unknown"),
-                    value: pv.outcome === "completed" ? 90 : pv.outcome === "struggled" ? 50 : 15,
-                    color: pv.outcome === "completed" ? "var(--status-pass)" : pv.outcome === "struggled" ? "var(--status-warn)" : "var(--status-fail)",
-                    description: pv.outcome,
-                  }))}
-                  graphHeight={80}
-                  legendTitle="Agent Outcomes"
-                  showLegend={false}
-                />
-
-                <div className="space-y-1.5">
-                  {report.narrative.persona_verdicts.map((pv) => {
-                    const isExpanded = expandedPersona === pv.persona_id;
-                    const sessionScreenshots = report.sessions_summary?.find(s => s.persona_id === pv.persona_id)?.screenshots || [];
-                    return (
-                      <div key={pv.persona_id}>
-                        <button
-                          onClick={() => setExpandedPersona(isExpanded ? null : pv.persona_id)}
-                          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left"
-                          style={{
-                            backgroundColor: isExpanded ? "rgba(15, 17, 23, 0.7)" : "transparent",
-                            border: isExpanded ? "1px solid rgba(28,28,32, 0.6)" : "1px solid transparent",
-                            backdropFilter: isExpanded ? "blur(12px)" : "none",
-                          }}
-                        >
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center font-mono shrink-0 transition-all" style={{
-                            fontSize: "9px", backgroundColor: "rgba(8, 9, 13, 0.8)",
-                            border: `2px solid ${catColor(agents.get(pv.persona_id)?.category || "unknown")}`,
-                            color: "var(--text-secondary)",
-                          }}>
-                            {initials((pv.persona_name || pv.name || "Unknown"))}
-                          </div>
-                          <span className="text-[14px] flex-1 font-medium" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
-                            {(pv.persona_name || pv.name || "Unknown")}
-                          </span>
-                          <span className="font-mono text-[10px] uppercase px-2.5 py-1 rounded-full font-medium" style={{
-                            backgroundColor: pv.outcome === "completed" ? "rgba(34,197,94,0.1)" : pv.outcome === "blocked" ? "rgba(232,164,74,0.1)" : "rgba(234,179,8,0.1)",
-                            color: pv.outcome === "completed" ? "var(--status-pass)" : pv.outcome === "blocked" ? "var(--status-fail)" : "var(--status-warn)",
-                          }}>
-                            {pv.outcome}
-                          </span>
-                          <span className="font-mono text-[10px] hidden sm:inline" style={{
-                            color: pv.would_recommend ? "var(--status-pass)" : "var(--status-fail)",
-                          }}>
-                            {pv.would_recommend ? "✓ recommend" : "✗ not recommended"}
-                          </span>
-                          <ChevronDown size={14} style={{ color: "var(--text-muted)", transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.3s cubic-bezier(0.16,1,0.3,1)" }} />
-                        </button>
-
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="px-4 pb-5 pt-2 ml-11">
-                                <p className="text-[14px] leading-[1.9]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
-                                  {pv.narrative}
-                                </p>
-                                {pv.primary_barrier && (
-                                  <div className="flex items-start gap-2.5 mt-3 p-3 rounded-lg" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.1)" }}>
-                                    <AlertTriangle size={13} style={{ color: "var(--accent)", marginTop: 2, flexShrink: 0 }} />
-                                    <p className="text-[13px] leading-relaxed" style={{ color: "var(--accent)", fontFamily: "var(--font-body)" }}>
-                                      {pv.primary_barrier}
-                                    </p>
-                                  </div>
-                                )}
-
-                                {sessionScreenshots.length > 0 && (
-                                  <div className="flex gap-2.5 overflow-x-auto mt-4 pb-2">
-                                    {sessionScreenshots.map((ss, i) => {
-                                      const imgSrc = ss.screenshot_url
-                                        ? `${API_URL}${ss.screenshot_url}`
-                                        : ss.screenshot_b64
-                                          ? `data:image/jpeg;base64,${ss.screenshot_b64}`
-                                          : null;
-                                      if (!imgSrc) return null;
-                                      return (
-                                        <button key={i} onClick={() => setLightboxImg(imgSrc)}
-                                          className="shrink-0 rounded-lg overflow-hidden transition-all duration-200 hover:scale-[1.03] hover:shadow-lg"
-                                          style={{ border: "1px solid rgba(30,34,50,0.5)" }}>
-                                          <img src={imgSrc} alt={`Step ${ss.step}`}
-                                            className="w-[160px] h-auto" />
-                                          <div className="font-mono text-[9px] px-2 py-1" style={{ color: "var(--text-muted)", backgroundColor: "rgba(10,11,15,0.6)" }}>
-                                            Step {ss.step}
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <p className="text-[15px] leading-[1.8] pl-4" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)", borderLeft: "2px solid var(--accent)" }}>
+                  {report.narrative.executive_summary}
+                </p>
               </div>
             )}
 
             {/* ── Top Issues ── */}
             {report.narrative?.top_issues && report.narrative.top_issues.length > 0 && (
-              <ReportFolder
-                title="Top Issues"
-                accentColor="var(--status-warn)"
-                count={report.narrative.top_issues.length}
-                subtitle="Prioritized by severity"
-                icon={<AlertTriangle size={14} style={{ color: "var(--status-warn)" }} />}
-                defaultOpen
-                className="mb-12"
-              >
-                <div className="space-y-3">
-                  {report.narrative.top_issues.map((issue, i) => (
+              <div className="mb-14">
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Issues</div>
+                <div className="space-y-5">
+                  {report.narrative.top_issues.map((issue: { severity?: string; title?: string; description?: string; fix?: string; affected_personas?: string[] }, i: number) => (
                     <motion.div
                       key={i}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
-                      className="glass-card p-5"
-                      style={{
-                        borderRadius: "12px",
-                        borderLeft: `3px solid ${severityColor(issue.severity)}`,
-                      }}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                      className="flex gap-3"
                     >
-                      <div className="flex items-center gap-2 mb-2.5">
-                        <span className="font-mono text-[9px] uppercase px-2 py-0.5 rounded-full font-medium" style={{
-                          backgroundColor: `${severityColor(issue.severity)}15`,
-                          color: severityColor(issue.severity),
-                        }}>
-                          {issue.severity}
-                        </span>
-                        {issue.category && (
-                          <span className="font-mono text-[9px] uppercase px-2 py-0.5 rounded-full" style={{
-                            backgroundColor: `${CAT_COLORS[issue.category] || "var(--text-muted)"}10`,
-                            color: CAT_COLORS[issue.category] || "var(--text-muted)",
-                          }}>
-                            {issue.category}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[15px] font-semibold mb-2" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>{issue.title}</div>
-                      <p className="text-[13px] leading-[1.8] mb-2.5" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{issue.description}</p>
-                      {issue.fix && (
-                        <div className="p-3 rounded-lg flex items-start gap-2" style={{ backgroundColor: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.1)" }}>
-                          <span className="font-mono text-[9px] uppercase font-semibold mt-0.5 shrink-0" style={{ color: "var(--status-pass)" }}>Fix:</span>
-                          <span className="text-[13px] leading-relaxed" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>{issue.fix}</span>
+                      <div
+                        className="w-1.5 h-1.5 rounded-full mt-2 shrink-0"
+                        style={{ backgroundColor: severityColor(issue.severity?.toLowerCase() || "minor") }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{issue.title}</span>
+                          <span className="text-[9px] uppercase tracking-wider shrink-0" style={{ fontFamily: "var(--font-display)", color: severityColor(issue.severity?.toLowerCase() || "minor") }}>{issue.severity}</span>
                         </div>
-                      )}
-                      {issue.affected_personas && issue.affected_personas.length > 0 && (
-                        <div className="flex items-center gap-1.5 mt-3">
-                          {issue.affected_personas.map((name) => (
-                            <div key={name} className="w-5 h-5 rounded-full flex items-center justify-center font-mono" style={{
-                              fontSize: "7px", backgroundColor: "rgba(30,34,50,0.5)", color: "var(--text-secondary)",
-                            }}>
-                              {initials(name)}
-                            </div>
-                          ))}
-                          {issue.impact_estimate && (
-                            <span className="font-mono text-[10px] ml-2" style={{ color: "var(--text-muted)" }}>{issue.impact_estimate}</span>
-                          )}
-                        </div>
-                      )}
-                    </motion.div>
-                  ))}
-                </div>
-              </ReportFolder>
-            )}
-
-            {/* ── Accessibility + Security side by side ── */}
-            <div className="grid sm:grid-cols-2 gap-4 mb-12">
-              {report.narrative?.accessibility_audit && (
-                <ReportFolder
-                  title="Accessibility Audit"
-                  accentColor="var(--cat-accessibility)"
-                  count={report.narrative.accessibility_audit.total_violations}
-                  subtitle={`${report.narrative.accessibility_audit.critical || 0} critical`}
-                  icon={<Eye size={14} style={{ color: "var(--cat-accessibility)" }} />}
-                  defaultOpen
-                >
-                  {report.narrative.accessibility_audit.total_violations != null && (
-                    <div className="mb-4">
-                      <span className="font-mono text-[32px] font-bold" style={{ color: "var(--text-primary)" }}>
-                        {report.narrative.accessibility_audit.total_violations}
-                      </span>
-                      <span className="font-mono text-[11px] ml-1.5" style={{ color: "var(--text-muted)" }}>violations</span>
-                    </div>
-                  )}
-                  <div className="space-y-2.5">
-                    {[
-                      { label: "Critical", value: report.narrative.accessibility_audit.critical, color: "var(--accent)" },
-                      { label: "Serious", value: report.narrative.accessibility_audit.serious, color: "var(--status-warn)" },
-                      { label: "Moderate", value: report.narrative.accessibility_audit.moderate, color: "var(--text-secondary)" },
-                      { label: "Minor", value: report.narrative.accessibility_audit.minor_count, color: "var(--text-muted)" },
-                    ].filter(item => item.value != null).map((item) => (
-                      <div key={item.label} className="flex items-center justify-between font-mono text-[11px]">
-                        <span style={{ color: item.color }}>{item.label}</span>
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "rgba(30,34,50,0.5)" }}>
-                            <div className="h-full rounded-full transition-all" style={{ backgroundColor: item.color, width: `${Math.min(((item.value || 0) / Math.max(report.narrative!.accessibility_audit!.total_violations || 1, 1)) * 100, 100)}%` }} />
-                          </div>
-                          <span className="tabular-nums" style={{ color: "var(--text-primary)", minWidth: 18, textAlign: "right" }}>{item.value}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ReportFolder>
-              )}
-
-              {report.narrative?.chaos_test_summary && (
-                <ReportFolder
-                  title="Security / Chaos Testing"
-                  accentColor="var(--accent)"
-                  subtitle={`${report.narrative.chaos_test_summary.inputs_tested || 0} inputs tested`}
-                  icon={<Shield size={14} style={{ color: "var(--accent)" }} />}
-                  defaultOpen
-                >
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    {[
-                      { label: "Tested", value: report.narrative.chaos_test_summary.inputs_tested, color: "var(--text-primary)" },
-                      { label: "Rejected", value: report.narrative.chaos_test_summary.inputs_rejected, color: "var(--status-pass)" },
-                      { label: "Accepted Bad", value: report.narrative.chaos_test_summary.inputs_accepted_incorrectly, color: (report.narrative.chaos_test_summary.inputs_accepted_incorrectly || 0) > 0 ? "var(--status-fail)" : "var(--status-pass)" },
-                      { label: "Server Errors", value: report.narrative.chaos_test_summary.server_errors, color: (report.narrative.chaos_test_summary.server_errors || 0) > 0 ? "var(--status-fail)" : "var(--status-pass)" },
-                    ].filter(item => item.value != null).map((item) => (
-                      <div key={item.label} className="text-center p-2 rounded-lg" style={{ backgroundColor: "rgba(15,17,23,0.4)" }}>
-                        <div className="font-mono text-[22px] font-bold" style={{ color: item.color }}>{item.value}</div>
-                        <div className="font-mono text-[9px] uppercase tracking-[1px] mt-0.5" style={{ color: "var(--text-muted)" }}>{item.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {report.narrative.chaos_test_summary.worst_finding && (
-                    <div className="p-3 rounded-lg text-[12px] leading-relaxed" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.1)", color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
-                      {report.narrative.chaos_test_summary.worst_finding}
-                    </div>
-                  )}
-                </ReportFolder>
-              )}
-            </div>
-
-            {/* ── Recommendations ── */}
-            {report.narrative?.recommendations && report.narrative.recommendations.length > 0 && (
-              <ReportFolder
-                title="Recommendations"
-                accentColor="var(--cat-accessibility)"
-                count={report.narrative.recommendations.length}
-                subtitle="Actionable next steps"
-                defaultOpen
-                className="mb-12"
-              >
-                <div className="space-y-2.5">
-                  {report.narrative.recommendations.map((rec, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
-                      className="glass-card flex gap-4 p-4"
-                      style={{ borderRadius: "12px" }}
-                    >
-                      <span className="font-mono text-[14px] font-bold shrink-0 w-6 h-6 rounded-md flex items-center justify-center" style={{ color: "var(--accent)", backgroundColor: "rgba(232,164,74,0.08)" }}>{typeof rec === "object" ? rec.rank : i + 1}</span>
-                      <div className="flex-1">
-                        <span className="text-[14px] leading-[1.8]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>{typeof rec === "object" ? rec.action : rec}</span>
-                        {typeof rec === "object" && rec.impact && (
-                          <span className="block text-[12px] mt-0.5" style={{ color: "var(--text-secondary)" }}>{rec.impact}</span>
+                        <p className="text-[12px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue.description}</p>
+                        {issue.fix && (
+                          <p className="text-[11px] mt-1" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>Fix: {issue.fix}</p>
                         )}
                       </div>
                     </motion.div>
                   ))}
                 </div>
-              </ReportFolder>
-            )}
-
-            {/* ── AI Vision Annotated Screenshot ── */}
-            {report.annotated_screenshot_url && (
-              <div className="mb-10">
-                <div className="flex items-center gap-3 mb-5">
-                  <div className="section-label">AI Vision Annotation</div>
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
-                </div>
-                <div
-                  className="rounded-xl overflow-hidden cursor-pointer group relative"
-                  style={{ border: "1px solid var(--border-default)" }}
-                  onClick={() => setLightboxImg(`${API_URL}${report.annotated_screenshot_url}`)}
-                >
-                  {/* Header bar */}
-                  <div
-                    className="flex items-center gap-3 px-4 py-2.5"
-                    style={{
-                      backgroundColor: "rgba(10,10,12,0.8)",
-                      borderBottom: "1px solid var(--border-default)",
-                    }}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--accent)", opacity: 0.8 }} />
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-warn)", opacity: 0.6 }} />
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-pass)", opacity: 0.6 }} />
-                    </div>
-                    <div className="flex-1 flex items-center gap-2">
-                      <Eye size={11} style={{ color: "var(--accent)" }} />
-                      <span className="text-[10px] uppercase tracking-[0.12em] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
-                        Gemini Vision Analysis
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: "rgb(239,68,68)" }} />
-                        <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>Problem</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: "rgb(234,179,8)" }} />
-                        <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>Warning</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: "rgb(34,197,94)" }} />
-                        <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>Good</span>
-                      </div>
-                    </div>
-                  </div>
-                  <img
-                    src={`${API_URL}${report.annotated_screenshot_url}`}
-                    alt="Annotated screenshot with issues highlighted"
-                    className="w-full transition-transform duration-300 group-hover:scale-[1.01]"
-                  />
-                  {/* Hover overlay */}
-                  <div
-                    className="absolute inset-0 top-[37px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-                    style={{ backgroundColor: "rgba(10,10,12,0.3)" }}
-                  >
-                    <div className="px-4 py-2 rounded-lg" style={{ backgroundColor: "rgba(10,10,12,0.8)", backdropFilter: "blur(4px)", border: "1px solid rgba(232,164,74,0.3)" }}>
-                      <span className="text-[11px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
-                        Click to enlarge
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <p className="text-[11px] mt-2.5 leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                  Gemini 3 Flash analyzed your page screenshot and identified specific UI elements with bounding boxes. Red = problems found by agents. Green = elements that work well.
-                </p>
               </div>
             )}
 
-            {/* ── LLM Fix Prompt — the hero feature ── */}
-            {report.fix_prompt && (
-              <div className="mb-10">
-                <div className="flex items-center gap-3 mb-5">
-                  <div className="section-label">Fix with AI</div>
-                  <div className="flex-1 h-px" style={{ backgroundColor: "var(--border-default)" }} />
+            {/* ── AI & Search Readiness ── */}
+            {report.ai_seo?.checks && report.ai_seo.checks.length > 0 && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-5">
+                  <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>AI & Search Readiness</span>
                 </div>
-
-                {/* Explanation card */}
-                <div
-                  className="rounded-xl overflow-hidden mb-4"
-                  style={{ border: "1px solid rgba(232,164,74,0.2)", backgroundColor: "rgba(232,164,74,0.03)" }}
-                >
-                  <div className="flex items-start gap-4 p-5">
-                    <div
-                      className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: "rgba(232,164,74,0.1)", border: "1px solid rgba(232,164,74,0.2)" }}
-                    >
-                      <Sparkles size={18} style={{ color: "var(--accent)" }} />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-[15px] font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                        Auto-Generated Fix Prompt
-                      </h3>
-                      <p className="text-[13px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
-                        We synthesized all {report.narrative?.top_issues?.length || 0} issues, {report.narrative?.accessibility_audit?.total_violations || 0} accessibility violations, and {report.narrative?.recommendations?.length || 0} recommendations into a single prompt. Copy it into <strong style={{ color: "var(--text-primary)" }}>ChatGPT</strong>, <strong style={{ color: "var(--text-primary)" }}>Claude</strong>, or <strong style={{ color: "var(--text-primary)" }}>Cursor</strong> to get code-level fixes.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Prompt block */}
-                <div
-                  className="rounded-xl overflow-hidden relative group"
-                  style={{ border: "1px solid var(--border-default)" }}
-                >
-                  {/* Terminal header */}
-                  <div
-                    className="flex items-center justify-between px-4 py-2.5"
-                    style={{
-                      backgroundColor: "rgba(10,10,12,0.8)",
-                      borderBottom: "1px solid var(--border-default)",
-                    }}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--accent)", opacity: 0.8 }} />
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-warn)", opacity: 0.6 }} />
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-pass)", opacity: 0.6 }} />
-                      </div>
-                      <span className="text-[10px] uppercase tracking-[0.1em] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                        prompt.md
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] font-mono px-2 py-0.5 rounded" style={{ color: "var(--text-muted)", backgroundColor: "rgba(255,255,255,0.04)" }}>
-                        {report.fix_prompt.length.toLocaleString()} chars
-                      </span>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(report.fix_prompt!);
-                          setCopiedPrompt(true);
-                          setTimeout(() => setCopiedPrompt(false), 2500);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-200 cursor-pointer"
-                        style={{
-                          fontFamily: "var(--font-display)",
-                          backgroundColor: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
-                          color: "var(--bg-base)",
-                          boxShadow: copiedPrompt ? "0 0 20px rgba(34,197,94,0.3)" : "0 0 20px rgba(232,164,74,0.15)",
-                        }}
-                      >
-                        {copiedPrompt ? (
-                          <>
-                            <CheckCircle2 size={12} />
-                            <span>Copied!</span>
-                          </>
+                <div className="space-y-2.5">
+                  {report.ai_seo.checks.map((check: { name: string; pass: boolean; detail: string }, i: number) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <div className="mt-0.5 shrink-0">
+                        {check.pass ? (
+                          <Check size={12} style={{ color: "var(--status-pass)" }} />
                         ) : (
-                          <>
-                            <Copy size={12} />
-                            <span>Copy Prompt</span>
-                          </>
+                          <X size={12} style={{ color: "var(--status-fail)" }} />
                         )}
-                      </button>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: check.pass ? "var(--text-secondary)" : "var(--text-primary)" }}>{check.name}</span>
+                        <span className="text-[11px] ml-2" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{check.detail}</span>
+                      </div>
                     </div>
-                  </div>
-
-                  {/* Prompt content */}
-                  <pre
-                    className="whitespace-pre-wrap text-[12px] leading-[1.8] p-5 overflow-x-auto max-h-[500px] overflow-y-auto"
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      color: "var(--text-secondary)",
-                      backgroundColor: "var(--bg-base)",
-                    }}
-                  >
-                    {report.fix_prompt}
-                  </pre>
-
-                  {/* Fade out at bottom */}
-                  <div
-                    className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none"
-                    style={{ background: "linear-gradient(transparent, var(--bg-base))" }}
-                  />
-                </div>
-
-                {/* Quick-paste buttons */}
-                <div className="flex items-center gap-3 mt-4">
-                  <span className="text-[10px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                    Paste into:
-                  </span>
-                  {[
-                    { name: "ChatGPT", url: "https://chat.openai.com" },
-                    { name: "Claude", url: "https://claude.ai" },
-                    { name: "Cursor", url: "https://cursor.sh" },
-                  ].map((tool) => (
-                    <a
-                      key={tool.name}
-                      href={tool.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors duration-150 no-underline"
-                      style={{
-                        fontFamily: "var(--font-display)",
-                        color: "var(--text-secondary)",
-                        backgroundColor: "rgba(255,255,255,0.03)",
-                        border: "1px solid var(--border-default)",
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(232,164,74,0.3)"; e.currentTarget.style.color = "var(--accent)"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-                    >
-                      {tool.name}
-                      <ExternalLink size={9} />
-                    </a>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* ── Persona Results — compact ── */}
+            {report.narrative?.persona_verdicts && report.narrative.persona_verdicts.length > 0 && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Personas</div>
+                <div className="space-y-1.5">
+                  {report.narrative.persona_verdicts.map((v: PersonaVerdict, i: number) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: i * 0.03 }}
+                      className="flex items-center gap-3 py-2 cursor-pointer group"
+                      onClick={() => setExpandedPersona(expandedPersona === v.persona_id ? null : v.persona_id)}
+                    >
+                      <div
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
+                        style={{ backgroundColor: `${catColor(v.category || "")}15`, color: catColor(v.category || ""), fontFamily: "var(--font-display)" }}
+                      >
+                        {initials(v.name || v.persona_name)}
+                      </div>
+                      <span className="text-[12px] font-medium flex-1 min-w-0 truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                        {v.name || v.persona_name}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{
+                        fontFamily: "var(--font-display)",
+                        backgroundColor: v.outcome === "completed" ? "rgba(74,222,128,0.08)" : v.outcome === "blocked" ? "rgba(248,113,113,0.08)" : "rgba(251,191,36,0.08)",
+                        color: v.outcome === "completed" ? "var(--status-pass)" : v.outcome === "blocked" ? "var(--status-fail)" : "var(--status-warn)",
+                      }}>
+                        {v.outcome}
+                      </span>
+                      <ChevronDown size={10} className="shrink-0 transition-transform" style={{ color: "var(--text-muted)", transform: expandedPersona === v.persona_id ? "rotate(180deg)" : "rotate(0deg)" }} />
+                    </motion.div>
+                  ))}
+                  <AnimatePresence>
+                    {expandedPersona && (() => {
+                      const v = report.narrative?.persona_verdicts?.find((p: PersonaVerdict) => p.persona_id === expandedPersona);
+                      if (!v || !v.narrative) return null;
+                      return (
+                        <motion.div
+                          key={expandedPersona}
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <p className="text-[12px] leading-relaxed pl-9 pb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                            {v.narrative}
+                          </p>
+                        </motion.div>
+                      );
+                    })()}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+
+            {/* ── Fix Prompt — prominent ── */}
+            {report.fix_prompt && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={13} style={{ color: "var(--accent)" }} />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Fix with AI</span>
+                  </div>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium transition-all cursor-pointer"
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
+                      color: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
+                      border: `1px solid ${copiedPrompt ? "rgba(74,222,128,0.2)" : "rgba(232,164,74,0.15)"}`,
+                    }}
+                  >
+                    <Copy size={10} />
+                    {copiedPrompt ? "Copied" : "Copy prompt"}
+                  </button>
+                </div>
+                <p className="text-[11px] mb-3 leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                  Paste this into ChatGPT, Claude, or Cursor to get code-level fixes for every issue found.
+                </p>
+                <div
+                  className="rounded-lg p-4 max-h-[240px] overflow-y-auto text-[11px] leading-relaxed"
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--text-secondary)",
+                    backgroundColor: "rgba(255,255,255,0.02)",
+                    border: "1px solid rgba(232,164,74,0.1)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {report.fix_prompt}
+                </div>
+              </div>
+            )}
+
+            {/* ── Annotated Screenshot ── */}
+            {(report.annotated_screenshot_url || report.annotated_screenshot_b64) && (
+              <div className="mb-14">
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Annotated Screenshot</div>
+                <img
+                  src={report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url}
+                  alt="Annotated screenshot"
+                  className="w-full rounded-lg cursor-pointer transition-opacity hover:opacity-90"
+                  style={{ border: "1px solid var(--border-default)" }}
+                  onClick={() => setLightboxImg(report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url || null)}
+                />
               </div>
             )}
 
             {/* ── Actions ── */}
-            <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
-            <div className="flex flex-wrap gap-3 mb-16">
+            <div className="flex items-center justify-center gap-3 pt-4">
               <a
                 href="/"
-                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px] no-underline"
-                style={{ color: "var(--text-secondary)", borderRadius: "8px" }}
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline"
+                style={{ fontFamily: "var(--font-display)", color: "var(--accent)", border: "1px solid rgba(232,164,74,0.2)" }}
               >
                 Test another site
               </a>
               <button
                 onClick={handleCopy}
-                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px]"
-                style={{ color: "var(--text-secondary)", borderRadius: "8px" }}
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
               >
-                <Copy size={11} />
-                {copied ? "Copied!" : "Share results"}
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="glass-card glass-card-hover flex items-center gap-2 px-4 py-2.5 font-mono text-[11px]"
-                style={{ color: "var(--text-secondary)", borderRadius: "8px" }}
-              >
-                <Printer size={11} />
-                Print report
+                <Copy size={10} />
+                {copied ? "Copied" : "Share"}
               </button>
             </div>
 
-            {/* Footer */}
-            <div className="font-mono text-[10px] pb-12" style={{ color: "var(--border-default)" }}>
-              trashmy.tech · HackIllinois 2026
-            </div>
           </motion.div>
         )}
       </main>

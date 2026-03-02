@@ -1,11 +1,11 @@
-"""trashmy.tech — 20 AI user personas for website stress-testing."""
+"""trashmy.tech — 30 AI user personas for website stress-testing."""
 
 import random
 
 PERSONAS = [
     # ── ACCESSIBILITY (5) ──────────────────────────────────────
     {
-        "id": "A1", "name": "Margaret", "age": 68,
+        "id": "A1", "name": "Margaret Liu", "age": 68,
         "category": "accessibility",
         "description": "Retired teacher with low vision who zooms everything to 200%",
         "avatar_emoji": "👵", "task_style": "slow_careful",
@@ -19,7 +19,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "A2", "name": "James", "age": 74,
+        "id": "A2", "name": "James Whitfield", "age": 74,
         "category": "accessibility",
         "description": "Veteran who navigates entirely with keyboard — no mouse",
         "avatar_emoji": "⌨️", "task_style": "keyboard_nav",
@@ -33,7 +33,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "A3", "name": "Priya", "age": 31,
+        "id": "A3", "name": "Priya Sharma", "age": 31,
         "category": "accessibility",
         "description": "Blind software engineer who relies on screen reader and ARIA labels",
         "avatar_emoji": "🧑‍🦯", "task_style": "screen_reader",
@@ -47,7 +47,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "A4", "name": "Carlos", "age": 45,
+        "id": "A4", "name": "Carlos Mendes", "age": 45,
         "category": "accessibility",
         "description": "Colorblind designer (deuteranopia) who can't distinguish red/green",
         "avatar_emoji": "🎨", "task_style": "visual_check",
@@ -61,7 +61,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "A5", "name": "Lin", "age": 52,
+        "id": "A5", "name": "Lin Zhang", "age": 52,
         "category": "accessibility",
         "description": "Motor-impaired user with shaky hands and high misclick rate",
         "avatar_emoji": "🤲", "task_style": "careful_clicks",
@@ -77,7 +77,7 @@ PERSONAS = [
 
     # ── DEMOGRAPHIC (5) ────────────────────────────────────────
     {
-        "id": "D1", "name": "Jayden", "age": 13,
+        "id": "D1", "name": "Jayden Reeves", "age": 13,
         "category": "demographic",
         "description": "Teenager who clicks lightning-fast and never reads anything",
         "avatar_emoji": "👦", "task_style": "speed_scan",
@@ -91,7 +91,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "D2", "name": "Fatima", "age": 35,
+        "id": "D2", "name": "Fatima Al-Rashid", "age": 35,
         "category": "demographic",
         "description": "Non-native English speaker confused by idioms and jargon",
         "avatar_emoji": "🌐", "task_style": "confused_reader",
@@ -105,7 +105,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "D3", "name": "Aiko", "age": 22,
+        "id": "D3", "name": "Aiko Tanaka", "age": 22,
         "category": "demographic",
         "description": "Mobile-first user in Tokyo on a small phone screen",
         "avatar_emoji": "📱", "task_style": "mobile_thumb",
@@ -119,7 +119,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "D4", "name": "Pat", "age": 35,
+        "id": "D4", "name": "Pat Donovan", "age": 35,
         "category": "demographic",
         "description": "Parent holding a baby in one hand, tapping with the other",
         "avatar_emoji": "👶", "task_style": "one_handed",
@@ -133,7 +133,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "D5", "name": "Sam", "age": 65,
+        "id": "D5", "name": "Sam Brennan", "age": 65,
         "category": "demographic",
         "description": "Retiree on a tablet who taps slowly and reads every word",
         "avatar_emoji": "📖", "task_style": "slow_reader",
@@ -149,7 +149,7 @@ PERSONAS = [
 
     # ── CHAOS (5) ──────────────────────────────────────────────
     {
-        "id": "C1", "name": "BackButtonBenny", "age": None,
+        "id": "C1", "name": "Ben Torres", "age": 28,
         "category": "chaos",
         "description": "Mashes the back button after every other action",
         "avatar_emoji": "⬅️", "task_style": "chaotic",
@@ -163,7 +163,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "C2", "name": "FormAnarchist", "age": None,
+        "id": "C2", "name": "Kai Nakamura", "age": 24,
         "category": "chaos",
         "description": "Puts SQL injection, emojis, and garbage into every form field",
         "avatar_emoji": "💣", "task_style": "adversarial",
@@ -177,7 +177,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "C3", "name": "SpeedRunner", "age": None,
+        "id": "C3", "name": "Zara Phillips", "age": 19,
         "category": "chaos",
         "description": "Tries to complete every flow as fast as humanly possible",
         "avatar_emoji": "⚡", "task_style": "speed_run",
@@ -191,7 +191,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "C4", "name": "DoubleClickDan", "age": None,
+        "id": "C4", "name": "Dan Okafor", "age": 44,
         "category": "chaos",
         "description": "Double-clicks absolutely everything including links and buttons",
         "avatar_emoji": "🖱️", "task_style": "double_click",
@@ -205,7 +205,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "C5", "name": "RageQuitter", "age": None,
+        "id": "C5", "name": "Riley Chen", "age": 21,
         "category": "chaos",
         "description": "Gives up after 3 seconds of waiting for anything",
         "avatar_emoji": "😤", "task_style": "impatient",
@@ -221,7 +221,7 @@ PERSONAS = [
 
     # ── BEHAVIORAL (5) ─────────────────────────────────────────
     {
-        "id": "B1", "name": "TheSkeptic", "age": 40,
+        "id": "B1", "name": "Monica Reeves", "age": 40,
         "category": "behavioral",
         "description": "Checks the privacy policy and terms before doing anything",
         "avatar_emoji": "🔍", "task_style": "cautious",
@@ -235,7 +235,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "B2", "name": "TheExplorer", "age": 28,
+        "id": "B2", "name": "Noah Andersen", "age": 28,
         "category": "behavioral",
         "description": "Clicks every link and visits every page before taking action",
         "avatar_emoji": "🧭", "task_style": "explorer",
@@ -249,7 +249,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "B3", "name": "TheMinimalist", "age": 33,
+        "id": "B3", "name": "Suki Patel", "age": 33,
         "category": "behavioral",
         "description": "Does the absolute minimum — skips every optional field",
         "avatar_emoji": "✂️", "task_style": "minimal",
@@ -263,7 +263,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "B4", "name": "ConfusedParent", "age": 55,
+        "id": "B4", "name": "Diane Kowalski", "age": 55,
         "category": "behavioral",
         "description": "Trying to sign up on behalf of their kid, confused by everything",
         "avatar_emoji": "😵", "task_style": "confused",
@@ -277,7 +277,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "B5", "name": "PowerUser", "age": 25,
+        "id": "B5", "name": "Alex Mercer", "age": 25,
         "category": "behavioral",
         "description": "Uses keyboard shortcuts, Ctrl+F, and expects everything to be fast",
         "avatar_emoji": "💻", "task_style": "power_user",
@@ -293,7 +293,7 @@ PERSONAS = [
 
     # ── PORTFOLIO / HARDCORE (10) ──────────────────────────────
     {
-        "id": "P1", "name": "HiringManager", "age": 42,
+        "id": "P1", "name": "David Park", "age": 42,
         "category": "portfolio",
         "description": "VP of Engineering reviewing your portfolio to decide on an interview. Clicks projects, checks links, judges load time.",
         "avatar_emoji": "👔", "task_style": "evaluator",
@@ -307,7 +307,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P2", "name": "RecruiterRita", "age": 29,
+        "id": "P2", "name": "Sarah Mitchell", "age": 29,
         "category": "portfolio",
         "description": "Tech recruiter who has 30 seconds per portfolio. Scans for contact info, GitHub link, and resume download.",
         "avatar_emoji": "📋", "task_style": "speed_scan",
@@ -321,7 +321,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P3", "name": "MobileRecruiter", "age": 34,
+        "id": "P3", "name": "Tomas Herrera", "age": 34,
         "category": "portfolio",
         "description": "Recruiter reviewing portfolios on their phone during commute. Tests responsive design, touch targets, scrolling.",
         "avatar_emoji": "🚇", "task_style": "mobile_thumb",
@@ -335,7 +335,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P4", "name": "DesignCritic", "age": 31,
+        "id": "P4", "name": "Leah Fontaine", "age": 31,
         "category": "portfolio",
         "description": "Senior UI designer who judges visual hierarchy, spacing, typography, and color contrast harshly.",
         "avatar_emoji": "🎨", "task_style": "visual_check",
@@ -349,9 +349,9 @@ PERSONAS = [
         },
     },
     {
-        "id": "P5", "name": "LinkChecker", "age": None,
+        "id": "P5", "name": "Marcus Webb", "age": 30,
         "category": "portfolio",
-        "description": "Automated bot that clicks every single link and button to find 404s, broken anchors, and dead ends.",
+        "description": "QA engineer who clicks every single link and button to find 404s, broken anchors, and dead ends.",
         "avatar_emoji": "🔗", "task_style": "explorer",
         "viewport": {"width": 1280, "height": 720},
         "behavioral_modifiers": {
@@ -363,7 +363,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P6", "name": "SlowConnection", "age": 38,
+        "id": "P6", "name": "Ruth Kamau", "age": 38,
         "category": "portfolio",
         "description": "User on a slow 3G connection in rural area. Everything takes forever. Tests if the site is usable with slow loading.",
         "avatar_emoji": "🐌", "task_style": "slow_careful",
@@ -377,7 +377,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P7", "name": "TabHoarder", "age": 26,
+        "id": "P7", "name": "Ethan Byrne", "age": 26,
         "category": "portfolio",
         "description": "Opens every project in a new tab, right-clicks everything, tests if links open correctly.",
         "avatar_emoji": "📑", "task_style": "explorer",
@@ -391,7 +391,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P8", "name": "ContactFormTester", "age": None,
+        "id": "P8", "name": "Yuki Endo", "age": 26,
         "category": "portfolio",
         "description": "Specifically targets contact forms and submission flows. Tries empty submissions, invalid emails, XSS payloads.",
         "avatar_emoji": "📧", "task_style": "adversarial",
@@ -405,7 +405,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P9", "name": "A11yAuditor", "age": 45,
+        "id": "P9", "name": "Angela Rivera", "age": 45,
         "category": "portfolio",
         "description": "Accessibility expert who tabs through the entire page, checks focus order, ARIA labels, and heading hierarchy.",
         "avatar_emoji": "♿", "task_style": "screen_reader",
@@ -419,7 +419,7 @@ PERSONAS = [
         },
     },
     {
-        "id": "P10", "name": "WidescreenDev", "age": 27,
+        "id": "P10", "name": "Jake Lindqvist", "age": 27,
         "category": "portfolio",
         "description": "Developer on an ultrawide 4K monitor. Tests if the layout stretches or breaks at extreme widths.",
         "avatar_emoji": "🖥️", "task_style": "power_user",
@@ -470,14 +470,13 @@ ADVERSARIAL_INPUTS = [
 
 
 def sample_personas(n: int = 20) -> list[dict]:
-    """Pick n personas ensuring at least 1 per category. Default 20 for thorough testing."""
+    """Pick n personas ensuring at least 2 per category. Default 20 for thorough testing."""
     categories = ["accessibility", "demographic", "chaos", "behavioral", "portfolio"]
     selected = []
 
     for cat in categories:
         pool = [p for p in PERSONAS if p["category"] == cat]
         if pool:
-            # Pick at least 2 per category if available
             count = min(2, len(pool))
             selected.extend(random.sample(pool, count))
 

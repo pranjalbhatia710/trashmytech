@@ -193,6 +193,133 @@ async def _check_focus_indicators(page: Page) -> dict:
         return {"total_checked": 0, "with_focus_style": 0, "without_focus_style": 0}
 
 
+async def _check_ai_seo(page: Page, url: str) -> dict:
+    """Check AI SEO / Generative Engine Optimization signals."""
+    from urllib.parse import urlparse
+    result = {
+        "structured_data": [],
+        "open_graph": {},
+        "twitter_cards": {},
+        "semantic_html": {},
+        "content_freshness": {},
+        "robots_ai_bots": {},
+        "llms_txt": False,
+        "sitemap_exists": False,
+        "ai_readability_score": 0,
+        "checks": [],
+    }
+
+    try:
+        # 1. JSON-LD structured data
+        json_ld = await page.evaluate("""() => {
+            const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+            return scripts.map(s => {
+                try { return JSON.parse(s.textContent); }
+                catch { return null; }
+            }).filter(Boolean);
+        }""")
+        result["structured_data"] = json_ld[:5]
+        if json_ld:
+            result["checks"].append({"name": "JSON-LD structured data", "pass": True, "detail": f"{len(json_ld)} schema(s) found"})
+        else:
+            result["checks"].append({"name": "JSON-LD structured data", "pass": False, "detail": "No structured data found — AI crawlers can't understand page context"})
+
+        # 2. Open Graph tags
+        og = await page.evaluate("""() => {
+            const tags = {};
+            document.querySelectorAll('meta[property^="og:"]').forEach(m => {
+                tags[m.getAttribute('property')] = m.getAttribute('content') || '';
+            });
+            return tags;
+        }""")
+        result["open_graph"] = og
+        og_complete = all(k in og for k in ["og:title", "og:description", "og:image"])
+        result["checks"].append({"name": "Open Graph tags", "pass": og_complete, "detail": f"{len(og)} tags found" + ("" if og_complete else " — missing og:title, og:description, or og:image")})
+
+        # 3. Twitter Cards
+        tc = await page.evaluate("""() => {
+            const tags = {};
+            document.querySelectorAll('meta[name^="twitter:"]').forEach(m => {
+                tags[m.getAttribute('name')] = m.getAttribute('content') || '';
+            });
+            return tags;
+        }""")
+        result["twitter_cards"] = tc
+        result["checks"].append({"name": "Twitter/X cards", "pass": len(tc) >= 2, "detail": f"{len(tc)} tags found"})
+
+        # 4. Semantic HTML quality
+        semantic = await page.evaluate("""() => {
+            const tags = ['article', 'section', 'nav', 'main', 'header', 'footer', 'aside', 'figure', 'figcaption', 'time'];
+            const found = {};
+            tags.forEach(t => { found[t] = document.querySelectorAll(t).length; });
+            return found;
+        }""")
+        result["semantic_html"] = semantic
+        semantic_count = sum(1 for v in semantic.values() if v > 0)
+        result["checks"].append({"name": "Semantic HTML", "pass": semantic_count >= 4, "detail": f"{semantic_count}/10 semantic elements used"})
+
+        # 5. Content freshness
+        freshness = await page.evaluate("""() => {
+            const timeTags = Array.from(document.querySelectorAll('time[datetime]')).map(t => t.getAttribute('datetime'));
+            const metaDate = document.querySelector('meta[name="date"], meta[property="article:published_time"], meta[property="article:modified_time"]');
+            return {
+                time_elements: timeTags.slice(0, 5),
+                meta_date: metaDate ? metaDate.getAttribute('content') : null,
+                has_dates: timeTags.length > 0 || !!metaDate,
+            };
+        }""")
+        result["content_freshness"] = freshness
+        result["checks"].append({"name": "Content freshness signals", "pass": freshness.get("has_dates", False), "detail": "Date metadata found" if freshness.get("has_dates") else "No date signals — AI may consider content stale"})
+
+        # 6. Check robots.txt for AI bot access
+        parsed = urlparse(url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        try:
+            robots_resp = await page.context.request.get(f"{base}/robots.txt", timeout=5000)
+            if robots_resp.ok:
+                robots_text = await robots_resp.text()
+                ai_bots = ["GPTBot", "ClaudeBot", "PerplexityBot", "Googlebot-Extended", "ChatGPT-User", "anthropic-ai", "CCBot"]
+                blocked = [bot for bot in ai_bots if f"User-agent: {bot}" in robots_text and "Disallow: /" in robots_text.split(f"User-agent: {bot}")[-1][:200]]
+                allowed = [bot for bot in ai_bots if bot not in blocked]
+                result["robots_ai_bots"] = {"blocked": blocked, "allowed": allowed, "has_robots": True}
+                if blocked:
+                    result["checks"].append({"name": "AI bot access", "pass": False, "detail": f"Blocked: {', '.join(blocked)}"})
+                else:
+                    result["checks"].append({"name": "AI bot access", "pass": True, "detail": "No AI bots blocked in robots.txt"})
+            else:
+                result["robots_ai_bots"] = {"has_robots": False}
+                result["checks"].append({"name": "AI bot access", "pass": True, "detail": "No robots.txt — all bots allowed by default"})
+        except Exception:
+            result["robots_ai_bots"] = {"has_robots": False}
+            result["checks"].append({"name": "AI bot access", "pass": True, "detail": "Could not check robots.txt"})
+
+        # 7. llms.txt
+        try:
+            llms_resp = await page.context.request.get(f"{base}/llms.txt", timeout=5000)
+            result["llms_txt"] = llms_resp.ok
+            result["checks"].append({"name": "llms.txt", "pass": llms_resp.ok, "detail": "Found — provides AI crawlers with site guidance" if llms_resp.ok else "Not found — consider adding llms.txt for AI crawler guidance"})
+        except Exception:
+            result["checks"].append({"name": "llms.txt", "pass": False, "detail": "Not found"})
+
+        # 8. sitemap.xml
+        try:
+            sitemap_resp = await page.context.request.get(f"{base}/sitemap.xml", timeout=5000)
+            result["sitemap_exists"] = sitemap_resp.ok
+            result["checks"].append({"name": "Sitemap", "pass": sitemap_resp.ok, "detail": "sitemap.xml found" if sitemap_resp.ok else "No sitemap.xml — limits AI discoverability"})
+        except Exception:
+            result["checks"].append({"name": "Sitemap", "pass": False, "detail": "Could not check"})
+
+        # Calculate score
+        passed = sum(1 for c in result["checks"] if c["pass"])
+        total = len(result["checks"])
+        result["ai_readability_score"] = round((passed / total) * 100) if total > 0 else 0
+
+    except Exception as e:
+        result["checks"].append({"name": "AI SEO check", "pass": False, "detail": f"Error: {str(e)[:100]}"})
+
+    return result
+
+
 async def _capture_screenshot_b64(page: Page, width: int = 800) -> str | None:
     try:
         raw_bytes = await page.screenshot(full_page=True, type="png")
@@ -322,7 +449,7 @@ async def crawl_site(url: str, on_screenshot=None) -> dict:
         # Parallel data collection
         (
             links, forms, buttons, images, seo, axe_result,
-            headings, focus, screenshot, interaction_map,
+            headings, focus, screenshot, interaction_map, ai_seo,
         ) = await asyncio.gather(
             _collect_links(page, url),
             _collect_forms(page),
@@ -334,6 +461,7 @@ async def crawl_site(url: str, on_screenshot=None) -> dict:
             _check_focus_indicators(page),
             _capture_screenshot_b64(page),
             build_interaction_map(page),
+            _check_ai_seo(page, url),
         )
 
         result["links"] = links
@@ -347,6 +475,7 @@ async def crawl_site(url: str, on_screenshot=None) -> dict:
         result["interactive_elements_count"] = len(interaction_map)
         result["screenshot_base64"] = screenshot
         result["console_errors"] = console_errors
+        result["ai_seo"] = ai_seo
         result["success"] = True
 
     except Exception as exc:

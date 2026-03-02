@@ -1,4 +1,4 @@
-"""trashmy.tech — Report generator using Gemini 3.1 Pro with thinking + structured JSON."""
+"""trashmy.tech — Report generator using Gemini 2.5 Pro with deep thinking + structured JSON."""
 
 import json
 import os
@@ -45,12 +45,19 @@ REPORT STRUCTURE (follow this exactly):
 
 2. THE THIRTY-SECOND VERSION: 2-3 sentences max. A busy CEO reads this and knows whether to panic or not. Reference the single most important finding and the single best thing about the site.
 
-3. FIVE SCORES (one line each):
+3. SIX SCORES (one line each):
    - Accessibility: [score]/100 -- [one sentence with specific data point]
    - Security: [score]/100 -- [one sentence]
    - Usability: [score]/100 -- [one sentence]
    - Mobile: [score]/100 -- [one sentence]
    - Performance: [score]/100 -- [one sentence]
+   - AI Readability: [score]/100 -- [one sentence about GEO/AI SEO readiness]
+
+AI READABILITY scoring guidance:
+- 90-100: Has JSON-LD, OG tags, llms.txt, semantic HTML, structured data, sitemap, no AI bots blocked
+- 70-89: Most signals present but missing 1-2 key items (like llms.txt or structured data)
+- 50-69: Basic SEO present but poor AI discoverability (no structured data, limited semantic HTML)
+- 0-49: Minimal signals — AI crawlers will struggle to understand and cite this content
 
 4. WHAT'S GOOD (2-4 bullets, each 1 sentence):
    Real things that work. Fast load? Clean layout? Good form validation? Say it. This makes the report credible. Always find something.
@@ -93,7 +100,8 @@ REPORT_SCHEMA = """{
     "security": {"score": 0, "one_liner": ""},
     "usability": {"score": 0, "one_liner": ""},
     "mobile": {"score": 0, "one_liner": ""},
-    "performance": {"score": 0, "one_liner": ""}
+    "performance": {"score": 0, "one_liner": ""},
+    "ai_readability": {"score": 0, "one_liner": ""}
   },
 
   "whats_good": [
@@ -337,6 +345,7 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             } for v in violations[:25]],
             "accessibility_violations_total": len(violations),
             "console_errors": crawl_data.get("console_errors", [])[:10],
+            "ai_seo": crawl_data.get("ai_seo", {}),
         },
         "tool_limitation_note": (
             f"{len(tool_limitations)} findings were tool limitations (Playwright couldn't interact). "
@@ -381,8 +390,8 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             config=GenerateContentConfig(
                 system_instruction=GEMINI_REPORT_PROMPT,
                 response_mime_type="application/json",
-                thinking_config={"thinking_budget": 8192},
-                max_output_tokens=12000,
+                thinking_config={"thinking_budget": 16384},
+                max_output_tokens=16000,
             ),
         )
 
@@ -423,6 +432,9 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             "recommendations": narrative.get("recommendations", []),
             "testing_notes": narrative.get("testing_notes", {}),
         }
+
+        # Attach AI SEO data directly to report
+        report["ai_seo"] = crawl_data.get("ai_seo", {})
 
         # Attach screenshot references
         report["sessions_summary"] = [
@@ -523,6 +535,9 @@ async def generate_fix_prompt(report: dict, url: str) -> str:
     recommendations = narrative.get("recommendations", [])
     what_doesnt_work = narrative.get("what_doesnt_work", [])
 
+    ai_seo = report.get("ai_seo", {})
+    ai_seo_checks = ai_seo.get("checks", [])
+
     findings_summary = json.dumps({
         "url": url,
         "overall_score": score,
@@ -530,19 +545,30 @@ async def generate_fix_prompt(report: dict, url: str) -> str:
         "accessibility": a11y,
         "what_doesnt_work": what_doesnt_work[:8],
         "recommendations": recommendations[:8],
+        "ai_seo_checks": ai_seo_checks,
     }, default=str)
 
     prompt = f"""You are generating a prompt that a developer can paste into ChatGPT or Claude to get code-level fixes for their website.
 
-The website {url} was audited by trashmy.tech with 50 AI personas. Here are the findings:
+The website {url} was audited by trashmy.tech with AI personas. Here are the findings:
 {findings_summary}
 
 Generate a comprehensive, well-structured prompt that:
 1. Starts with "I need help fixing issues found on my website {url}"
 2. Lists each issue with specific details (what element, what's wrong, WCAG references where applicable)
 3. Asks for code fixes (HTML, CSS, JS, ARIA attributes) for each issue
-4. Groups fixes by type (accessibility, usability, security, performance)
+4. Groups fixes by type (accessibility, usability, security, performance, AI SEO)
 5. Asks for the fixes in order of impact
+
+IMPORTANT — Include an "AI SEO / Generative Engine Optimization" section that covers:
+- Adding JSON-LD structured data (Person, WebSite, Article schemas as appropriate)
+- Adding/completing Open Graph meta tags
+- Creating a llms.txt file for AI crawler guidance
+- Configuring robots.txt to allow AI bots (GPTBot, ClaudeBot, PerplexityBot)
+- Adding semantic HTML elements (article, section, nav, main, header, footer)
+- Adding content freshness signals (dates, last-modified)
+- Creating/updating sitemap.xml
+- Making content citation-worthy for LLMs (clear headings, statistical evidence, quotable passages)
 
 Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do not wrap in JSON."""
 

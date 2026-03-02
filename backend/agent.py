@@ -503,7 +503,7 @@ async def _execute_action(
 # Core agent loop
 # ---------------------------------------------------------------------------
 
-async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dict:
+async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_step_screenshot=None) -> dict:
     from playwright.async_api import async_playwright
 
     session_start = time.time()
@@ -515,7 +515,7 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
     tool_limitations: list[dict] = []
     task_completed = False
     final_url = url
-    headed = os.getenv("HEADLESS", "true").lower() == "false"
+    headed = os.getenv("HEADLESS", "false").lower() == "false"
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         name=persona.get("name", "Unknown"),
@@ -603,6 +603,13 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model) -> dic
             network_errors.clear()
 
             steps.append(step_record)
+
+            # Stream screenshot to frontend if callback provided
+            if on_step_screenshot and screenshot_b64:
+                try:
+                    await on_step_screenshot(persona.get("id", ""), step_num + 1, screenshot_b64)
+                except Exception:
+                    pass
 
             # Track tool limitations separately
             if exec_result.get("tool_limitation"):
@@ -771,13 +778,13 @@ def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
 # Local execution
 # ---------------------------------------------------------------------------
 
-async def run_agent_local(url: str, persona: dict, site_context: dict) -> dict:
+async def run_agent_local(url: str, persona: dict, site_context: dict, on_step_screenshot=None) -> dict:
     from google import genai
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
     client = genai.Client(api_key=api_key)
-    return await _agent_loop(url, persona, site_context, client)
+    return await _agent_loop(url, persona, site_context, client, on_step_screenshot=on_step_screenshot)
 
 
 async def run_swarm_local(url: str, personas: list[dict], site_context: dict) -> list[dict]:

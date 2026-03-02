@@ -19,7 +19,7 @@ export function ReportFolder({
   title,
   subtitle,
   icon,
-  accentColor = "#ef4444",
+  accentColor = "var(--accent)",
   count,
   defaultOpen = false,
   children,

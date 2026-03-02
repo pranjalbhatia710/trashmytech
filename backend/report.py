@@ -476,3 +476,54 @@ def _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations):
             "tool_limitations": len(tool_limitations),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# LLM Fix Prompt Generator — uses Gemini Flash for speed
+# ---------------------------------------------------------------------------
+
+async def generate_fix_prompt(report: dict, url: str) -> str:
+    """Generate a copy-paste prompt for ChatGPT/Claude to fix the issues found."""
+    from gemini_tools import GeminiTools
+
+    tools = GeminiTools(model="flash")
+
+    score = report.get("score", {}).get("overall", "?")
+    narrative = report.get("narrative", {})
+    top_issues = narrative.get("top_issues", [])
+    a11y = narrative.get("accessibility_audit", {})
+    recommendations = narrative.get("recommendations", [])
+    what_doesnt_work = narrative.get("what_doesnt_work", [])
+
+    findings_summary = json.dumps({
+        "url": url,
+        "overall_score": score,
+        "top_issues": top_issues[:10],
+        "accessibility": a11y,
+        "what_doesnt_work": what_doesnt_work[:8],
+        "recommendations": recommendations[:8],
+    }, default=str)
+
+    prompt = f"""You are generating a prompt that a developer can paste into ChatGPT or Claude to get code-level fixes for their website.
+
+The website {url} was audited by trashmy.tech with 50 AI personas. Here are the findings:
+{findings_summary}
+
+Generate a comprehensive, well-structured prompt that:
+1. Starts with "I need help fixing issues found on my website {url}"
+2. Lists each issue with specific details (what element, what's wrong, WCAG references where applicable)
+3. Asks for code fixes (HTML, CSS, JS, ARIA attributes) for each issue
+4. Groups fixes by type (accessibility, usability, security, performance)
+5. Asks for the fixes in order of impact
+
+Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do not wrap in JSON."""
+
+    raw = await asyncio.to_thread(
+        tools._generate_content,
+        prompt,
+        use_url_context=False,
+        use_google_search=False,
+        thinking_level="LOW",
+        response_mime_type="text/plain",
+    )
+    return raw

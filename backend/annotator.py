@@ -41,7 +41,7 @@ RULES:
 - For "too small" findings, draw the box around the small element
 - For "missing alt text", draw the box around the image that's missing it
 - For "good" findings (fast load, clear CTA), draw a box around what works
-- Max 6 annotations per screenshot to keep it readable
+- Max 8 annotations per screenshot to keep it readable
 - If you can't locate an element mentioned in findings, skip it
 
 Return ONLY a JSON array. No markdown. No explanation.
@@ -56,21 +56,21 @@ Example output:
 COLORS = {
     "problem": {
         "box": (239, 68, 68),
-        "fill": (239, 68, 68, 40),
-        "text_bg": (239, 68, 68, 200),
+        "fill": (239, 68, 68, 50),
+        "text_bg": (220, 38, 38, 230),
         "text": (255, 255, 255),
     },
     "good": {
         "box": (34, 197, 94),
-        "fill": (34, 197, 94, 30),
-        "text_bg": (34, 197, 94, 200),
+        "fill": (34, 197, 94, 40),
+        "text_bg": (22, 163, 74, 230),
         "text": (255, 255, 255),
     },
     "warning": {
         "box": (234, 179, 8),
-        "fill": (234, 179, 8, 35),
-        "text_bg": (234, 179, 8, 200),
-        "text": (0, 0, 0),
+        "fill": (234, 179, 8, 45),
+        "text_bg": (202, 138, 4, 230),
+        "text": (255, 255, 255),
     },
 }
 
@@ -82,18 +82,36 @@ def _get_client():
     return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
+def _load_font(size: int):
+    """Try to load a bold font at the given size, falling back gracefully."""
+    paths = [
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/SFNSMono.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+    for p in paths:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
 def _draw_annotations(img: Image.Image, annotations: list[dict]) -> Image.Image:
-    """Draw bounding boxes and labels on an image."""
+    """Draw thick, visible bounding boxes and labels on an image."""
     draw = ImageDraw.Draw(img, "RGBA")
     width, height = img.size
 
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 12)
-    except Exception:
-        try:
-            font = ImageFont.truetype("/System/Library/Fonts/SFNSMono.ttf", 12)
-        except Exception:
-            font = ImageFont.load_default()
+    # Scale font/border to image size — bigger images get bigger annotations
+    scale = max(width, height) / 1000
+    border_width = max(3, int(3 * scale))
+    font_size = max(14, int(14 * scale))
+    label_pad = max(5, int(5 * scale))
+    corner_len = max(12, int(16 * scale))
+
+    font = _load_font(font_size)
 
     for ann in annotations:
         try:
@@ -117,31 +135,52 @@ def _draw_annotations(img: Image.Image, annotations: list[dict]) -> Image.Image:
             # Semi-transparent fill
             draw.rectangle([x_min, y_min, x_max, y_max], fill=colors["fill"])
 
-            # Border (2px)
-            for i in range(2):
+            # Thick border
+            for i in range(border_width):
                 draw.rectangle(
                     [x_min - i, y_min - i, x_max + i, y_max + i],
                     outline=colors["box"],
                 )
 
-            # Label
+            # Corner brackets for extra visibility
+            bw = border_width
+            c = colors["box"]
+            # Top-left
+            draw.line([(x_min - bw, y_min - bw), (x_min - bw + corner_len, y_min - bw)], fill=c, width=bw + 1)
+            draw.line([(x_min - bw, y_min - bw), (x_min - bw, y_min - bw + corner_len)], fill=c, width=bw + 1)
+            # Top-right
+            draw.line([(x_max + bw - corner_len, y_min - bw), (x_max + bw, y_min - bw)], fill=c, width=bw + 1)
+            draw.line([(x_max + bw, y_min - bw), (x_max + bw, y_min - bw + corner_len)], fill=c, width=bw + 1)
+            # Bottom-left
+            draw.line([(x_min - bw, y_max + bw), (x_min - bw + corner_len, y_max + bw)], fill=c, width=bw + 1)
+            draw.line([(x_min - bw, y_max + bw - corner_len), (x_min - bw, y_max + bw)], fill=c, width=bw + 1)
+            # Bottom-right
+            draw.line([(x_max + bw - corner_len, y_max + bw), (x_max + bw, y_max + bw)], fill=c, width=bw + 1)
+            draw.line([(x_max + bw, y_max + bw - corner_len), (x_max + bw, y_max + bw)], fill=c, width=bw + 1)
+
+            # Label with pill-shaped background
             if label:
                 text_bbox = draw.textbbox((0, 0), label, font=font)
                 text_w = text_bbox[2] - text_bbox[0]
                 text_h = text_bbox[3] - text_bbox[1]
-                pad = 4
 
-                label_y = y_min - text_h - pad * 2 - 2
+                label_y = y_min - text_h - label_pad * 2 - bw - 2
                 if label_y < 0:
-                    label_y = y_max + 2
+                    label_y = y_max + bw + 2
                 label_x = x_min
 
-                draw.rectangle(
-                    [label_x, label_y, label_x + text_w + pad * 2, label_y + text_h + pad * 2],
-                    fill=colors["text_bg"],
-                )
+                # Pill shape with rounded corners
+                pill_rect = [
+                    label_x,
+                    label_y,
+                    label_x + text_w + label_pad * 2,
+                    label_y + text_h + label_pad * 2,
+                ]
+                radius = min(6, (text_h + label_pad * 2) // 2)
+                draw.rounded_rectangle(pill_rect, radius=radius, fill=colors["text_bg"])
+
                 draw.text(
-                    (label_x + pad, label_y + pad),
+                    (label_x + label_pad, label_y + label_pad),
                     label,
                     fill=colors["text"],
                     font=font,
@@ -177,7 +216,7 @@ async def annotate_screenshot(
 
     findings_text = "\n".join([
         f"- [{f.get('type', 'issue')}] {f.get('title', '')}: {f.get('detail', f.get('description', ''))}"
-        for f in real_findings[:6]
+        for f in real_findings[:8]
     ])
 
     async with _annotation_semaphore:
@@ -195,7 +234,7 @@ async def annotate_screenshot(
                 config=types.GenerateContentConfig(
                     temperature=0.2,
                     response_mime_type="application/json",
-                    max_output_tokens=1000,
+                    max_output_tokens=1500,
                 ),
             )
 
@@ -221,7 +260,7 @@ async def annotate_screenshot(
     annotated = _draw_annotations(img, annotations)
 
     buf = BytesIO()
-    annotated.save(buf, format="JPEG", quality=70)
+    annotated.save(buf, format="JPEG", quality=80)
     return base64.b64encode(buf.getvalue()).decode()
 
 
@@ -240,7 +279,7 @@ async def annotate_overview_screenshot(
     problems = sorted(
         [f for f in all_findings if f.get("is_site_bug", True) and f.get("type") != "tool_limitation"],
         key=lambda f: severity_order.get(f.get("severity", f.get("type", "LOW")), 4),
-    )[:3]
+    )[:4]
 
     strengths = [f for f in all_findings if f.get("type") == "strength"][:2]
 

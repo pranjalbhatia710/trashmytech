@@ -20,8 +20,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from crawler import crawl_site
 from personas import sample_personas
-from report import generate_report
+from report import generate_report, generate_fix_prompt
 from agent import run_agent_local
+from annotator import annotate_screenshot
+from gemini_tools import GeminiTools
 
 load_dotenv()
 
@@ -52,6 +54,7 @@ tests_store: dict[str, dict[str, Any]] = {}
 screenshots_store: dict[str, dict[str, str]] = {}  # {test_id: {"persona_id/step": b64, ...}}
 rate_limit_store: dict[str, list[float]] = defaultdict(list)
 idempotency_cache: dict[str, tuple[str, float]] = {}
+preview_cache: dict[str, dict] = {}  # URL → preview result
 
 RATE_LIMIT_MAX = 5
 RATE_LIMIT_WINDOW = 60
@@ -183,6 +186,47 @@ async def get_annotated_screenshot(test_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Preview — quick Gemini Flash analysis
+# ---------------------------------------------------------------------------
+@app.post("/v1/preview")
+async def preview_url(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return _error_response("invalid_body", "Request body must be valid JSON.", 400)
+
+    url = body.get("url")
+    if not url or not isinstance(url, str):
+        return _error_response("invalid_url", "Field 'url' is required.", 400)
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return _error_response("invalid_url", "URL must start with http:// or https://.", 400)
+
+    # Return cached result if available
+    if url in preview_cache:
+        return preview_cache[url]
+
+    try:
+        tools = GeminiTools(model="flash")
+        raw = await asyncio.to_thread(
+            tools.analyze_url,
+            url,
+            (
+                "Analyze this website and return a JSON object with exactly these fields:\n"
+                '- "site_name": the name or title of the site\n'
+                '- "description": one sentence describing what this site does\n'
+                '- "audience": who the target audience is (one sentence)\n'
+                '- "observations": an array of exactly 3 strings, each a brief UX, accessibility, or performance observation about the site\n'
+                "Be specific and concise. Base observations on what you can actually see on the page."
+            ),
+        )
+        result = json.loads(raw)
+        preview_cache[url] = result
+        return result
+    except Exception as exc:
+        return _error_response("preview_failed", f"Preview failed: {str(exc)[:200]}", 500)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket — real-time pipeline
 # ---------------------------------------------------------------------------
 @app.websocket("/ws/{test_id}")
@@ -202,7 +246,17 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         test["status"] = "crawling"
         await websocket.send_json({"phase": "crawling", "status": "started"})
 
-        crawl_data = await crawl_site(url)
+        async def _crawl_screenshot_cb(b64: str):
+            try:
+                await websocket.send_json({
+                    "phase": "crawling",
+                    "type": "screenshot",
+                    "screenshot_b64": b64,
+                })
+            except Exception:
+                pass
+
+        crawl_data = await crawl_site(url, on_screenshot=_crawl_screenshot_cb)
         test["crawl_data"] = crawl_data
 
         # Extract counts safely
@@ -215,6 +269,18 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         violations_count = len(violations) if isinstance(violations, list) else 0
         page_title = crawl_data.get("title", "")
         load_time = crawl_data.get("page_load_time_ms", 0)
+
+        # Send crawl screenshot to frontend for the browser viewer
+        crawl_screenshot_b64 = crawl_data.get("screenshot_base64")
+        if crawl_screenshot_b64:
+            try:
+                await websocket.send_json({
+                    "phase": "crawling",
+                    "type": "screenshot",
+                    "screenshot_b64": crawl_screenshot_b64,
+                })
+            except Exception:
+                pass
 
         await websocket.send_json({
             "phase": "crawling", "status": "complete",
@@ -269,27 +335,42 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             "has_h1": seo.get("has_h1", False),
         }
 
-        # Run agents
-        if USE_MODAL:
-            agent_results = await _run_agents_modal(url, personas, site_context)
-        else:
-            agent_results = await asyncio.gather(
-                *(run_agent_local(url, persona, site_context) for persona in personas),
-                return_exceptions=True,
-            )
+        # Screenshot streaming callback
+        screenshot_queue: asyncio.Queue = asyncio.Queue()
 
-        # Process results and stream to client
-        final_results = []
-        for i, result in enumerate(agent_results):
+        async def on_screenshot(agent_id, step_num, b64):
+            await screenshot_queue.put((agent_id, step_num, b64))
+
+        async def screenshot_sender():
+            while True:
+                item = await screenshot_queue.get()
+                if item is None:
+                    break
+                aid, step_num, b64 = item
+                try:
+                    await websocket.send_json({
+                        "phase": "swarming",
+                        "type": "screenshot",
+                        "agent_id": aid,
+                        "step": step_num,
+                        "screenshot_b64": b64,
+                    })
+                except Exception:
+                    pass
+
+        sender_task = asyncio.create_task(screenshot_sender())
+
+        # Helper to process a completed agent result and stream to client
+        async def _process_agent_result(result, persona, idx):
             if isinstance(result, Exception):
                 result = {
-                    "agent_id": personas[i]["id"],
+                    "agent_id": persona["id"],
                     "persona": {
-                        "id": personas[i]["id"],
-                        "name": personas[i]["name"],
-                        "age": personas[i]["age"],
-                        "category": personas[i]["category"],
-                        "description": personas[i]["description"],
+                        "id": persona["id"],
+                        "name": persona["name"],
+                        "age": persona["age"],
+                        "category": persona["category"],
+                        "description": persona["description"],
                     },
                     "task_completed": False,
                     "outcome": "blocked",
@@ -302,9 +383,8 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     "dead_ends": ["Agent crashed"],
                     "steps_taken": 0,
                 }
-            final_results.append(result)
 
-            # Stream step summaries (no screenshots in WS to save bandwidth)
+            # Stream step summaries
             step_summaries = []
             for step in result.get("steps", []):
                 step_summaries.append({
@@ -320,8 +400,8 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
             await websocket.send_json({
                 "phase": "swarming",
-                "agent_id": result.get("agent_id", personas[i]["id"]),
-                "persona_name": personas[i]["name"],
+                "agent_id": result.get("agent_id", persona["id"]),
+                "persona_name": persona["name"],
                 "status": "complete",
                 "task_completed": result.get("task_completed", False),
                 "outcome": result.get("outcome", "struggled"),
@@ -332,6 +412,63 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                 "findings": result.get("findings", [])[:10],
             })
 
+            # Annotate the last screenshot with agent findings and stream it
+            findings = result.get("findings", [])
+            steps = result.get("steps", [])
+            if findings and steps:
+                last_b64 = None
+                for s in reversed(steps):
+                    if s.get("screenshot_b64"):
+                        last_b64 = s["screenshot_b64"]
+                        break
+                if last_b64:
+                    try:
+                        annotated_b64 = await annotate_screenshot(
+                            last_b64, findings, url
+                        )
+                        await websocket.send_json({
+                            "phase": "swarming",
+                            "type": "annotated_screenshot",
+                            "agent_id": result.get("agent_id", persona["id"]),
+                            "screenshot_b64": annotated_b64,
+                        })
+                    except Exception as e:
+                        print(f"Agent annotation failed: {e}")
+
+            return result
+
+        # Run agents
+        if USE_MODAL:
+            # Modal: run all agents remotely, stream screenshots from results as they arrive
+            agent_results = await _run_agents_modal(
+                url, personas, site_context, websocket, screenshot_queue
+            )
+            # Stop screenshot sender
+            await screenshot_queue.put(None)
+            await sender_task
+
+            # Process and stream each result
+            final_results = []
+            for i, result in enumerate(agent_results):
+                processed = await _process_agent_result(result, personas[i], i)
+                final_results.append(processed)
+        else:
+            # Local: run with live screenshot callback
+            agent_results = await asyncio.gather(
+                *(run_agent_local(url, persona, site_context, on_step_screenshot=on_screenshot)
+                  for persona in personas),
+                return_exceptions=True,
+            )
+            # Stop screenshot sender
+            await screenshot_queue.put(None)
+            await sender_task
+
+            # Process and stream each result
+            final_results = []
+            for i, result in enumerate(agent_results):
+                processed = await _process_agent_result(result, personas[i], i)
+                final_results.append(processed)
+
         test["agent_results"] = final_results
 
         # ── Phase 3: Reporting ────────────────────────────────
@@ -339,6 +476,15 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         await websocket.send_json({"phase": "reporting", "status": "started"})
 
         report = await generate_report(crawl_data, final_results)
+
+        # Generate LLM fix prompt using Gemini Flash
+        try:
+            fix_prompt = await generate_fix_prompt(report, url)
+            report["fix_prompt"] = fix_prompt
+        except Exception as e:
+            print(f"Fix prompt generation failed: {e}")
+            report["fix_prompt"] = None
+
         test["report"] = report
         test["status"] = "complete"
 
@@ -383,14 +529,36 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 # ---------------------------------------------------------------------------
 # Modal execution (optional)
 # ---------------------------------------------------------------------------
-async def _run_agents_modal(url: str, personas: list[dict], site_context: dict) -> list[dict]:
-    """Run agents on Modal for parallel serverless execution."""
+async def _run_agents_modal(
+    url: str,
+    personas: list[dict],
+    site_context: dict,
+    websocket=None,
+    screenshot_queue=None,
+) -> list[dict]:
+    """Run agents on Modal for parallel serverless execution.
+
+    Streams screenshots from completed agents via the screenshot_queue.
+    """
     try:
         from modal_agent import run_agent_remote
-        tasks = [
-            asyncio.to_thread(run_agent_remote, url, persona, site_context)
-            for persona in personas
-        ]
+
+        async def run_and_stream(persona):
+            """Run one agent on Modal, then stream its screenshots."""
+            result = await asyncio.to_thread(run_agent_remote, url, persona, site_context)
+            # Extract screenshots from steps and stream them
+            if screenshot_queue and not isinstance(result, Exception):
+                for step in result.get("steps", []):
+                    b64 = step.get("screenshot_b64")
+                    if b64:
+                        await screenshot_queue.put((
+                            persona["id"],
+                            step.get("step_number", 0),
+                            b64,
+                        ))
+            return result
+
+        tasks = [run_and_stream(persona) for persona in personas]
         return await asyncio.gather(*tasks, return_exceptions=True)
     except ImportError:
         print("Modal not configured, falling back to local execution")

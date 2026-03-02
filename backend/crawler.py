@@ -213,8 +213,11 @@ async def _capture_screenshot_b64(page: Page, width: int = 800) -> str | None:
 # Public API
 # ---------------------------------------------------------------------------
 
-async def crawl_site(url: str) -> dict:
-    """Crawl *url* with Chromium and return structured results. Never raises."""
+async def crawl_site(url: str, on_screenshot=None) -> dict:
+    """Crawl *url* with Chromium and return structured results. Never raises.
+
+    on_screenshot: optional async callback(b64: str) called with screenshots during crawl.
+    """
     result: dict[str, Any] = {
         "url": url,
         "success": False,
@@ -291,6 +294,27 @@ async def crawl_site(url: str) -> dict:
 
         # Wait for page to be truly interactive
         await wait_for_interactive(page, timeout_ms=10000)
+
+        # Early screenshot — stream to frontend while data collection runs
+        if on_screenshot:
+            try:
+                early_b64 = await _capture_screenshot_b64(page)
+                if early_b64:
+                    await on_screenshot(early_b64)
+            except Exception:
+                pass
+
+            # Scroll down and capture mid-page screenshot
+            try:
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                await asyncio.sleep(0.5)
+                mid_b64 = await _capture_screenshot_b64(page)
+                if mid_b64:
+                    await on_screenshot(mid_b64)
+                # Scroll back to top
+                await page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
 
         # Title
         result["title"] = await _safe(page.title(), default=None)

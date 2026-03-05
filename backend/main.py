@@ -11,12 +11,16 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
+import logging
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("trashmy")
 
 from crawler import crawl_site
 from personas import sample_personas
@@ -30,7 +34,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-AGENT_COUNT = int(os.getenv("AGENT_COUNT", "15"))  # Default 15, scale to 30
+AGENT_COUNT = int(os.getenv("AGENT_COUNT", "20"))  # Default 20
 USE_MODAL = os.getenv("USE_MODAL", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
@@ -104,6 +108,91 @@ async def health():
     return {"status": "ok", "version": "2.0.0", "agent_count": AGENT_COUNT, "use_modal": USE_MODAL}
 
 
+# Live event log for diagnostics page
+_event_log: list[dict] = []
+MAX_EVENT_LOG = 200
+
+def _log_event(level: str, msg: str, data: dict | None = None):
+    """Log an event to both Python logger and the in-memory event buffer."""
+    getattr(log, level, log.info)(msg)
+    _event_log.append({
+        "ts": time.strftime("%H:%M:%S"),
+        "level": level,
+        "msg": msg,
+        **(data or {}),
+    })
+    if len(_event_log) > MAX_EVENT_LOG:
+        _event_log.pop(0)
+
+
+@app.get("/v1/events")
+async def get_events():
+    return _event_log[-100:]
+
+
+@app.get("/dash")
+async def dashboard():
+    """Live backend diagnostics dashboard."""
+    return HTMLResponse("""<!DOCTYPE html>
+<html><head>
+<title>trashmy.tech — backend dashboard</title>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0a0c; color:#e8e6e3; font-family:'SF Mono',monospace; font-size:12px; padding:20px; }
+  h1 { font-size:14px; color:#e8a44a; margin-bottom:16px; font-weight:600; }
+  .section { margin-bottom:20px; }
+  .label { color:#5a5660; font-size:10px; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px; }
+  .stat { display:inline-block; background:#111114; border:1px solid #2a2a32; border-radius:6px; padding:8px 14px; margin:0 6px 6px 0; }
+  .stat .val { font-size:18px; font-weight:bold; color:#e8e6e3; }
+  .stat .lbl { font-size:9px; color:#5a5660; margin-top:2px; }
+  #log { background:#111114; border:1px solid #2a2a32; border-radius:6px; padding:10px; max-height:60vh; overflow-y:auto; }
+  .entry { padding:2px 0; display:flex; gap:8px; border-bottom:1px solid #1a1a1f; }
+  .entry .ts { color:#2a2a32; flex-shrink:0; }
+  .entry.error .msg { color:#f87171; font-weight:600; }
+  .entry.warning .msg { color:#fbbf24; }
+  .entry.info .msg { color:#8a8690; }
+  .ok { color:#4ade80; } .fail { color:#f87171; } .warn { color:#fbbf24; }
+</style>
+</head><body>
+<h1>trashmy.tech backend</h1>
+<div class="section">
+  <div class="label">Config</div>
+  <div class="stat"><div class="val" id="agents">-</div><div class="lbl">agents</div></div>
+  <div class="stat"><div class="val" id="modal">-</div><div class="lbl">modal</div></div>
+  <div class="stat"><div class="val" id="tests">-</div><div class="lbl">tests</div></div>
+  <div class="stat"><div class="val" id="headless">-</div><div class="lbl">headless</div></div>
+</div>
+<div class="section">
+  <div class="label">Active tests</div>
+  <div id="active">none</div>
+</div>
+<div class="section">
+  <div class="label">Event log (live)</div>
+  <div id="log"></div>
+</div>
+<script>
+async function poll() {
+  try {
+    const h = await (await fetch('/v1/health')).json();
+    document.getElementById('agents').textContent = h.agent_count;
+    document.getElementById('modal').textContent = h.use_modal ? 'ON' : 'OFF';
+    document.getElementById('headless').textContent = 'true';
+  } catch(e) {}
+  try {
+    const evts = await (await fetch('/v1/events')).json();
+    const el = document.getElementById('log');
+    el.innerHTML = evts.slice(-80).reverse().map(e =>
+      `<div class="entry ${e.level}"><span class="ts">${e.ts}</span><span class="msg">${e.msg}</span></div>`
+    ).join('');
+    document.getElementById('tests').textContent = evts.filter(e => e.msg.includes('test created')).length || '0';
+  } catch(e) {}
+}
+poll(); setInterval(poll, 2000);
+</script>
+</body></html>""")
+
+
 @app.post("/v1/tests")
 async def create_test(request: Request):
     client_ip = request.client.host if request.client else "unknown"
@@ -136,6 +225,7 @@ async def create_test(request: Request):
     rate_limit_store[client_ip].append(now)
     idempotency_cache[url] = (test_id, now)
 
+    _log_event("info", f"test created: {test_id[:8]} -> {url}")
     return {"test_id": test_id, "status": "queued"}
 
 
@@ -229,6 +319,8 @@ async def preview_url(request: Request):
 # ---------------------------------------------------------------------------
 # WebSocket — real-time pipeline
 # ---------------------------------------------------------------------------
+_active_pipelines: set[str] = set()
+
 @app.websocket("/ws/{test_id}")
 async def ws_pipeline(websocket: WebSocket, test_id: str):
     await websocket.accept()
@@ -239,15 +331,25 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         await websocket.close()
         return
 
+    # Prevent duplicate pipeline runs (React strict mode double-mounts)
+    if test_id in _active_pipelines:
+        # Pipeline already running — just close this duplicate connection silently
+        _log_event("info", f"[{test_id[:8]}] duplicate WS connection rejected (pipeline already running)")
+        await websocket.close()
+        return
+    _active_pipelines.add(test_id)
+
     url = test["url"]
 
     try:
         # ── Phase 1: Crawling ─────────────────────────────────
         test["status"] = "crawling"
+        _log_event("info", f"[{test_id[:8]}] crawl started for {url}")
         await websocket.send_json({"phase": "crawling", "status": "started"})
 
         async def _crawl_screenshot_cb(b64: str):
             try:
+                _log_event("info", f"[{test_id[:8]}] crawl screenshot captured")
                 await websocket.send_json({
                     "phase": "crawling",
                     "type": "screenshot",
@@ -257,6 +359,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                 pass
 
         crawl_data = await crawl_site(url, on_screenshot=_crawl_screenshot_cb)
+        _log_event("info", f"[{test_id[:8]}] crawl complete — {len(crawl_data.get('links', []))} links, {len(crawl_data.get('forms', []))} forms")
         test["crawl_data"] = crawl_data
 
         # Extract counts safely
@@ -299,6 +402,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         personas = sample_personas(AGENT_COUNT)
         agent_count = len(personas)
         test["status"] = "swarming"
+        _log_event("info", f"[{test_id[:8]}] swarming started — {agent_count} agents, USE_MODAL={USE_MODAL}")
 
         await websocket.send_json({
             "phase": "swarming", "status": "started", "agent_count": agent_count,
@@ -314,7 +418,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             ],
         })
 
-        # Notify client about each agent
+        # Notify client about each agent with a brief delay for visual stagger
         for persona in personas:
             await websocket.send_json({
                 "phase": "swarming",
@@ -324,6 +428,13 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                 "persona_category": persona["category"],
                 "persona_description": persona["description"],
                 "status": "running",
+            })
+            # Also send a log event so frontend log is descriptive
+            await websocket.send_json({
+                "phase": "swarming",
+                "type": "log",
+                "level": "info",
+                "message": f"{persona['name']} ({persona['category']}) launching browser...",
             })
 
         # Build site context
@@ -339,6 +450,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         screenshot_queue: asyncio.Queue = asyncio.Queue()
 
         async def on_screenshot(agent_id, step_num, b64):
+            _log_event("info", f"[{test_id[:8]}] screenshot: agent={agent_id} step={step_num}")
             await screenshot_queue.put((agent_id, step_num, b64))
 
         async def screenshot_sender():
@@ -437,45 +549,128 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
             return result
 
-        # Run agents
-        if USE_MODAL:
-            # Modal: run all agents remotely, stream screenshots from results as they arrive
-            agent_results = await _run_agents_modal(
-                url, personas, site_context, websocket, screenshot_queue
-            )
-            # Stop screenshot sender
-            await screenshot_queue.put(None)
-            await sender_task
+        # Launch Chromium browsers, distribute agents across them
+        from playwright.async_api import async_playwright as pw_start
 
-            # Process and stream each result
-            final_results = []
-            for i, result in enumerate(agent_results):
-                processed = await _process_agent_result(result, personas[i], i)
-                final_results.append(processed)
-        else:
-            # Local: run with live screenshot callback
-            agent_results = await asyncio.gather(
-                *(run_agent_local(url, persona, site_context, on_step_screenshot=on_screenshot)
-                  for persona in personas),
+        NUM_BROWSERS = min(int(os.getenv("NUM_BROWSERS", "10")), 10, agent_count)
+        headed = os.getenv("HEADLESS", "true").lower() == "false"
+
+        _log_event("info", f"[{test_id[:8]}] launching {NUM_BROWSERS} Chromium browsers (headed={headed})...")
+
+        pw = await pw_start().start()
+        browsers = []
+        for bi in range(NUM_BROWSERS):
+            b = await pw.chromium.launch(
+                headless=not headed,
+                slow_mo=80 if headed else 0,
+            )
+            browsers.append(b)
+            _log_event("info", f"[{test_id[:8]}] browser {bi+1}/{NUM_BROWSERS} launched (pid {b.contexts})")
+
+        _log_event("info", f"[{test_id[:8]}] all {NUM_BROWSERS} browsers ready — distributing {len(personas)} agents")
+
+        # Distribute personas across browsers: round-robin
+        # Each browser gets ~2 agents running as separate tabs (contexts)
+        browser_assignments: list[list[tuple[int, dict]]] = [[] for _ in range(NUM_BROWSERS)]
+        for i, persona in enumerate(personas):
+            browser_assignments[i % NUM_BROWSERS].append((i, persona))
+
+        final_results: list = [None] * len(personas)
+        results_lock = asyncio.Lock()
+        _agents_started = 0
+        _agents_done = 0
+
+        async def _run_agent_on_browser(idx: int, persona: dict, browser):
+            nonlocal _agents_started, _agents_done
+            # Brief stagger per browser group
+            await asyncio.sleep((idx % NUM_BROWSERS) * 0.2)
+            _agents_started += 1
+            name = persona['name']
+            browser_num = idx % NUM_BROWSERS + 1
+            _log_event("info", f"[{test_id[:8]}] [{_agents_started}/{len(personas)}] {name} -> browser {browser_num}")
+            try:
+                await websocket.send_json({
+                    "phase": "swarming",
+                    "type": "log",
+                    "level": "info",
+                    "message": f"{name} opening tab on browser {browser_num}...",
+                })
+            except Exception:
+                pass
+            try:
+                result = await run_agent_local(
+                    url, persona, site_context,
+                    on_step_screenshot=on_screenshot,
+                    shared_browser=browser,
+                )
+            except Exception as exc:
+                _log_event("error", f"[{test_id[:8]}] {name} CRASHED: {str(exc)[:150]}")
+                result = exc
+            _agents_done += 1
+            steps = result.get('steps_taken', 0) if isinstance(result, dict) else 0
+            issues = result.get('issues_found', 0) if isinstance(result, dict) else 0
+            errs = result.get('errors', []) if isinstance(result, dict) else [str(result)]
+            _log_event("info", f"[{test_id[:8]}] [{_agents_done}/{len(personas)}] {name} done — {steps} steps, {issues} issues")
+            if errs:
+                for err in errs[:2]:
+                    _log_event("warning", f"[{test_id[:8]}] {name}: {str(err)[:120]}")
+            async with results_lock:
+                processed = await _process_agent_result(result, persona, idx)
+                final_results[idx] = processed
+
+        async def _run_browser_group(browser_idx: int):
+            """Run all agents assigned to one browser concurrently (as separate tabs)."""
+            browser = browsers[browser_idx]
+            group = browser_assignments[browser_idx]
+            await asyncio.gather(
+                *(_run_agent_on_browser(idx, persona, browser) for idx, persona in group),
                 return_exceptions=True,
             )
-            # Stop screenshot sender
-            await screenshot_queue.put(None)
-            await sender_task
 
-            # Process and stream each result
-            final_results = []
-            for i, result in enumerate(agent_results):
-                processed = await _process_agent_result(result, personas[i], i)
-                final_results.append(processed)
+        # Run all browser groups in parallel
+        await asyncio.gather(
+            *(_run_browser_group(bi) for bi in range(NUM_BROWSERS)),
+            return_exceptions=True,
+        )
+
+        # Fill any failed slots
+        failed_count = 0
+        for i in range(len(final_results)):
+            if final_results[i] is None:
+                failed_count += 1
+                _log_event("error", f"[{test_id[:8]}] {personas[i]['name']} returned None")
+                final_results[i] = await _process_agent_result(
+                    Exception("Agent failed silently"), personas[i], i
+                )
+        if failed_count:
+            _log_event("warning", f"[{test_id[:8]}] {failed_count}/{len(personas)} agents failed")
+
+        # Cleanup all browsers
+        _log_event("info", f"[{test_id[:8]}] closing {NUM_BROWSERS} browsers...")
+        for b in browsers:
+            try:
+                await b.close()
+            except Exception:
+                pass
+        try:
+            await pw.stop()
+        except Exception:
+            pass
+
+        # Stop screenshot sender
+        await screenshot_queue.put(None)
+        await sender_task
+        _log_event("info", f"[{test_id[:8]}] all {len(personas)} agents complete across {NUM_BROWSERS} browsers")
 
         test["agent_results"] = final_results
 
         # ── Phase 3: Reporting ────────────────────────────────
         test["status"] = "reporting"
+        _log_event("info", f"[{test_id[:8]}] report generation started")
         await websocket.send_json({"phase": "reporting", "status": "started"})
 
         report = await generate_report(crawl_data, final_results)
+        _log_event("info", f"[{test_id[:8]}] report generated — score={report.get('score', {}).get('overall', '?')}")
 
         # Generate LLM fix prompt using Gemini Flash
         try:
@@ -510,9 +705,11 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
     except WebSocketDisconnect:
         test["status"] = "disconnected"
+        _log_event("warning", f"[{test_id[:8]}] client disconnected")
     except Exception as exc:
         test["status"] = "error"
-        print(f"Pipeline error: {traceback.format_exc()}")
+        _log_event("error", f"[{test_id[:8]}] PIPELINE ERROR: {str(exc)[:300]}")
+        log.error(f"Pipeline error: {traceback.format_exc()}")
         try:
             await websocket.send_json({
                 "phase": "error", "message": str(exc)[:300],
@@ -520,6 +717,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         except Exception:
             pass
     finally:
+        _active_pipelines.discard(test_id)
         try:
             await websocket.close()
         except Exception:
@@ -527,48 +725,9 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Modal execution (optional)
-# ---------------------------------------------------------------------------
-async def _run_agents_modal(
-    url: str,
-    personas: list[dict],
-    site_context: dict,
-    websocket=None,
-    screenshot_queue=None,
-) -> list[dict]:
-    """Run agents on Modal for parallel serverless execution.
-
-    Streams screenshots from completed agents via the screenshot_queue.
-    """
-    try:
-        from modal_agent import run_agent_remote
-
-        async def run_and_stream(persona):
-            """Run one agent on Modal, then stream its screenshots."""
-            result = await asyncio.to_thread(run_agent_remote, url, persona, site_context)
-            # Extract screenshots from steps and stream them
-            if screenshot_queue and not isinstance(result, Exception):
-                for step in result.get("steps", []):
-                    b64 = step.get("screenshot_b64")
-                    if b64:
-                        await screenshot_queue.put((
-                            persona["id"],
-                            step.get("step_number", 0),
-                            b64,
-                        ))
-            return result
-
-        tasks = [run_and_stream(persona) for persona in personas]
-        return await asyncio.gather(*tasks, return_exceptions=True)
-    except ImportError:
-        print("Modal not configured, falling back to local execution")
-        from agent import run_swarm_local
-        return await run_swarm_local(url, personas, site_context)
-
-
-# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"Starting trashmy.tech server (agents={AGENT_COUNT}, modal={USE_MODAL})")
+    _log_event("info", f"server starting — agents={AGENT_COUNT}, modal={USE_MODAL}, headless={os.getenv('HEADLESS', 'true')}")
+    log.info(f"Dashboard: http://localhost:8000/dash")
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -140,13 +140,13 @@ export default function Home() {
         animate={{ opacity: bgReady ? 1 : 0 }}
         transition={{ duration: 1.8, ease: "easeOut" }}
       >
-        <NeuralBackground color="#e8a44a" trailOpacity={0.04} particleCount={500} speed={0.5} />
+        <NeuralBackground color="#e8a44a" trailOpacity={0.04} particleCount={400} speed={0.8} />
       </motion.div>
 
       <div
         className="fixed inset-0 z-[1] pointer-events-none"
         style={{
-          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.4) 50%, rgba(10,10,12,0.85) 100%)",
+          background: "radial-gradient(ellipse at 50% 50%, transparent 0%, rgba(10,10,12,0.15) 50%, rgba(10,10,12,0.6) 100%)",
         }}
       />
 
@@ -172,17 +172,17 @@ export default function Home() {
           </a>
         </motion.header>
 
-        {/* Hero */}
-        <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6">
-          <div className="max-w-[620px] w-full text-center">
+        {/* Hero — centered */}
+        <main className="flex-1 flex flex-col items-center justify-center px-6 sm:px-8">
+          <div className="max-w-[560px] w-full text-center">
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
-              className="mb-5"
+              className="mb-8"
             >
               <h1
-                className="text-[36px] sm:text-[48px] font-bold leading-[1.1] tracking-tight"
+                className="text-[36px] sm:text-[48px] font-bold leading-[1.15] tracking-tight"
                 style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
               >
                 find out what&apos;s{" "}
@@ -195,7 +195,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.35 }}
-              className="mb-8 h-6"
+              className="mb-10 h-6"
             >
               <Typewriter
                 text={[
@@ -323,6 +323,27 @@ export default function Home() {
 
           </div>
         </main>
+
+        {/* Footer */}
+        <motion.footer
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4, delay: 0.6 }}
+          className="px-6 sm:px-8 py-4 flex items-center justify-between"
+        >
+          <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+            Built at HackIllinois 2026
+          </span>
+          <a
+            href="/test/demo"
+            className="text-[11px] no-underline transition-colors"
+            style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            view demo &rarr;
+          </a>
+        </motion.footer>
       </div>
     </div>
   );

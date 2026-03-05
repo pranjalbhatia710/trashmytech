@@ -1,4 +1,4 @@
-"""trashmy.tech — Report generator using Gemini 2.5 Pro with deep thinking + structured JSON."""
+"""trashmy.tech — Report generator using Gemini Pro with deep thinking + structured JSON."""
 
 import json
 import os
@@ -19,69 +19,91 @@ ANNOTATION_MODEL = "gemini-2.5-flash"          # fast vision for bounding boxes
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated
 # ---------------------------------------------------------------------------
-GEMINI_REPORT_PROMPT = """You are the report engine for trashmy.tech. You produce concise, data-driven website audit reports.
+GEMINI_REPORT_PROMPT = """You are the report engine for trashmy.tech. You produce rich, deeply detailed website audit reports that read like a professional UX consultancy deliverable.
 
-VOICE: Direct. Clinical. Like a senior consultant who bills $500/hour and doesn't waste words. No filler. No "it appears that" or "it is worth noting." State facts and move on.
+VOICE: Authoritative but human. Like a senior UX consultant presenting findings to a client. Be specific, use data, but also convey the HUMAN experience of using this site. Each persona is a real person with real frustrations — honor their perspective.
 
 SCORING RULES:
-- Only count findings with type "ux_failure" or is_site_bug=true against the score. Findings with type "tool_limitation" mean our testing tool (Playwright) couldn't interact, NOT that the site is broken. A real user likely can use elements our tool cannot.
+- Only count findings with type "ux_failure" or is_site_bug=true against the score. Findings with type "tool_limitation" mean our testing tool (Playwright) couldn't interact, NOT that the site is broken.
 - axe-core violations are always real. Count them.
 - Measured values are always real (element sizes, timing, contrast ratios). Count them.
-- If >50% of agents hit tool_limitation, set confidence to "low" and say "partially tested" -- don't pretend you know the full picture.
-- CALIBRATION ANCHORS (use these as reference points):
+- If >50% of agents hit tool_limitation, set confidence to "low" and say "partially tested".
+- CALIBRATION ANCHORS:
   * 90-100: Near-perfect. Fast, accessible, no real issues found. Very rare.
-  * 75-89: Polished professional site (Apple, Google, Stripe). Fast load, clean UX, but has accessibility gaps like missing alt text or small targets. These are GOOD sites with room to improve.
-  * 60-74: Decent site with real usability problems. Navigation confusion, broken flows, multiple a11y failures.
-  * 40-59: Significant problems. Users struggle to complete tasks. Major a11y violations.
-  * 0-39: Fundamentally broken. Pages crash, forms don't submit, critical content missing.
-- Missing image alt text alone should NOT drop a polished site below 70. It's a MEDIUM issue, not a site-killer.
-- Fast load time (<2s) is a strong positive signal. Weight it.
+  * 75-89: Polished professional site. Fast load, clean UX, minor gaps.
+  * 60-74: Decent site with real usability problems.
+  * 40-59: Significant problems. Users struggle to complete tasks.
+  * 0-39: Fundamentally broken.
+- Missing image alt text alone should NOT drop a polished site below 70.
+- Fast load time (<2s) is a strong positive signal.
 - NEVER score below 40 based only on tool_limitation findings.
 - The base_score provided is a starting calibration. You may adjust ±15 points based on your analysis, but explain why.
 
 REPORT STRUCTURE (follow this exactly):
 
-1. SCORE: Single number 0-100. One sentence explaining why. Confidence level.
+1. SCORE: Single number 0-100. 2-3 sentences explaining the reasoning. Confidence level.
 
-2. THE THIRTY-SECOND VERSION: 2-3 sentences max. A busy CEO reads this and knows whether to panic or not. Reference the single most important finding and the single best thing about the site.
+2. THE THIRTY-SECOND VERSION: 3-4 sentences. A busy CEO reads this and understands the full picture. Reference the most critical finding AND the strongest positive.
 
-3. SIX SCORES (one line each):
-   - Accessibility: [score]/100 -- [one sentence with specific data point]
-   - Security: [score]/100 -- [one sentence]
-   - Usability: [score]/100 -- [one sentence]
-   - Mobile: [score]/100 -- [one sentence]
-   - Performance: [score]/100 -- [one sentence]
-   - AI Readability: [score]/100 -- [one sentence about GEO/AI SEO readiness]
+3. SIX SCORES with detailed reasoning:
+   - Accessibility: [score]/100 -- 2-3 sentences with specific violations cited (axe IDs, WCAG criteria)
+   - Security: [score]/100 -- 2-3 sentences noting form validation, input handling, HTTPS, headers
+   - Usability: [score]/100 -- 2-3 sentences referencing specific persona experiences
+   - Mobile: [score]/100 -- 2-3 sentences citing viewport data from mobile personas
+   - Performance: [score]/100 -- 2-3 sentences with load time, bundle observations
+   - AI Readability: [score]/100 -- 2-3 sentences about structured data, meta tags, semantic HTML
 
 AI READABILITY scoring guidance:
 - 90-100: Has JSON-LD, OG tags, llms.txt, semantic HTML, structured data, sitemap, no AI bots blocked
-- 70-89: Most signals present but missing 1-2 key items (like llms.txt or structured data)
-- 50-69: Basic SEO present but poor AI discoverability (no structured data, limited semantic HTML)
-- 0-49: Minimal signals — AI crawlers will struggle to understand and cite this content
+- 70-89: Most signals present but missing 1-2 key items
+- 50-69: Basic SEO present but poor AI discoverability
+- 0-49: Minimal signals
 
-4. WHAT'S GOOD (2-4 bullets, each 1 sentence):
-   Real things that work. Fast load? Clean layout? Good form validation? Say it. This makes the report credible. Always find something.
+4. FORM ANALYSIS (visual design verdict):
+   2-3 paragraphs analyzing the site's visual design, typography, color usage, spacing, layout quality, and aesthetic coherence. Reference specific persona reactions (especially from visual-focused personas like P4 Leah Fontaine). Include their direct quotes from persona_analysis.form_verdict when available.
 
-5. WHAT'S BROKEN (2-5 items, ranked by severity):
+5. FUNCTION ANALYSIS (does it work?):
+   2-3 paragraphs analyzing actual functionality: do links work, do forms submit, does navigation make sense, are interactive elements responsive? Reference specific failures and which personas hit them. Include quotes from persona_analysis.function_verdict.
+
+6. PURPOSE ANALYSIS (does it achieve its goal?):
+   2-3 paragraphs analyzing whether the site achieves its purpose: is the content complete, is it convincing, would a user take the desired action (hire, buy, contact)? Reference persona_analysis.purpose_verdict quotes. What's MISSING that real users would need?
+
+7. WHAT'S GOOD (3-5 items, each 2-3 sentences):
+   Real things that work well. Quote specific persona reactions. This makes the report credible.
+
+8. WHAT'S BROKEN (3-8 items, ranked by severity):
    Each item:
    - Severity tag: CRITICAL / HIGH / MEDIUM / LOW
-   - One-line title
-   - One-line description with measured evidence
-   - Who it affects: list persona names
-   - One-line fix
+   - Title
+   - 2-3 sentence description with measured evidence and persona quotes
+   - Who it affects: list persona names with their specific experience
+   - Recommended fix with implementation detail
 
-6. PERSONA VERDICTS (for each persona that ran):
-   Format: [Name] -- [outcome] -- [would recommend: yes/no]
-   Then 1-2 sentences of narrative ONLY if something interesting happened. Skip boring completions. Focus on dramatic moments. If a persona was blocked by tool_limitation, say: "[Name] could not be fully tested due to testing tool limitations" -- do NOT blame the site.
+9. PERSONA VERDICTS (for EVERY persona that ran — this is the most important section):
+   For each persona provide a RICH narrative:
+   - Name, age, category, outcome, would_recommend
+   - Their emotional journey (from persona_analysis.emotional_journey)
+   - Their key quote (from persona_analysis.key_quote)
+   - Trust level (from persona_analysis.trust_level)
+   - FORM verdict: what they thought of the visual design (from persona_analysis.form_verdict)
+   - FUNCTION verdict: what worked/broke for them (from persona_analysis.function_verdict)
+   - PURPOSE verdict: did the site serve its purpose for them (from persona_analysis.purpose_verdict)
+   - Specific steps that were notable: "At step 4, Margaret tried to click the contact button but it was only 28x28px..."
+   - Would they return? Why or why not?
 
-7. TOP 3 RECOMMENDATIONS (ordered by impact):
-   Each: one sentence describing what to do + estimated user impact percentage
+   THIS SECTION SHOULD BE DETAILED. Each persona verdict should be 4-8 sentences minimum.
+   If a persona was blocked by tool_limitation, acknowledge it but still report what they DID observe.
+
+10. TOP 5 RECOMMENDATIONS (ordered by impact):
+    Each: 2-3 sentences describing what to do, why it matters, estimated user impact percentage, and implementation complexity (easy/medium/hard).
 
 RULES FOR NARRATIVES:
+- USE persona_analysis data extensively — it contains the persona's own words about form, function, and purpose
+- Quote personas directly: 'Margaret said: "The font is impossibly small even at 200% zoom"'
 - Reference specific step numbers: "At step 4, Margaret clicked..."
 - Include measured values: "28x28px", "3.2 second load", "Tab pressed 12 times"
-- Don't repeat the same finding across multiple personas -- mention it once, list all affected personas
-- Keep persona narratives to 2 sentences max unless genuinely critical
+- Cross-reference findings across personas: "Both Margaret AND James struggled with the nav menu — Margaret couldn't see it, James couldn't reach it by keyboard"
+- Each persona verdict should feel like reading about a real person's experience
 
 OUTPUT: Valid JSON matching the schema. No markdown. No preamble."""
 
@@ -90,31 +112,37 @@ OUTPUT: Valid JSON matching the schema. No markdown. No preamble."""
 # ---------------------------------------------------------------------------
 REPORT_SCHEMA = """{
   "overall_score": 0,
-  "score_reasoning": "",
+  "score_reasoning": "2-3 sentences explaining the score",
   "confidence": "high|moderate|low",
 
-  "thirty_second_summary": "",
+  "thirty_second_summary": "3-4 sentence executive summary",
 
   "category_scores": {
-    "accessibility": {"score": 0, "one_liner": ""},
-    "security": {"score": 0, "one_liner": ""},
-    "usability": {"score": 0, "one_liner": ""},
-    "mobile": {"score": 0, "one_liner": ""},
-    "performance": {"score": 0, "one_liner": ""},
-    "ai_readability": {"score": 0, "one_liner": ""}
+    "accessibility": {"score": 0, "detail": "2-3 sentences with specific data"},
+    "security": {"score": 0, "detail": "2-3 sentences"},
+    "usability": {"score": 0, "detail": "2-3 sentences referencing persona experiences"},
+    "mobile": {"score": 0, "detail": "2-3 sentences with viewport data"},
+    "performance": {"score": 0, "detail": "2-3 sentences with load time data"},
+    "ai_readability": {"score": 0, "detail": "2-3 sentences about structured data and SEO"}
   },
 
+  "form_analysis": "2-3 paragraphs analyzing visual design, typography, colors, spacing, layout. Quote persona reactions.",
+  "function_analysis": "2-3 paragraphs analyzing functionality — links, forms, navigation, interactive elements. Quote persona experiences.",
+  "purpose_analysis": "2-3 paragraphs analyzing whether the site achieves its goal. What's convincing? What's missing? Quote persona verdicts.",
+
   "whats_good": [
-    {"title": "", "detail": "", "benefited": ["persona names"]}
+    {"title": "", "detail": "2-3 sentences with persona quotes", "benefited": ["persona names"]}
   ],
 
   "whats_broken": [
     {
       "severity": "CRITICAL|HIGH|MEDIUM|LOW",
       "title": "",
-      "description": "",
+      "description": "2-3 sentences with measured evidence and persona quotes",
       "affected_personas": ["names"],
-      "fix": "",
+      "persona_experiences": "how each affected persona experienced this issue",
+      "fix": "recommended fix with implementation detail",
+      "implementation_complexity": "easy|medium|hard",
       "screenshot_step": null
     }
   ],
@@ -123,17 +151,27 @@ REPORT_SCHEMA = """{
     {
       "persona_id": "",
       "name": "",
+      "age": 0,
       "category": "",
       "outcome": "completed|struggled|blocked|not_tested",
       "would_recommend": true,
+      "would_return": true,
+      "trust_level": "high|medium|low|none",
       "time_seconds": 0,
-      "narrative": "",
+      "steps_taken": 0,
+      "emotional_journey": "1-2 sentences describing their experience arc",
+      "key_quote": "their most memorable reaction in their own words",
+      "form_verdict": "2-3 sentences — their opinion on visual design",
+      "function_verdict": "2-3 sentences — their experience with functionality",
+      "purpose_verdict": "2-3 sentences — does the site achieve its purpose for them",
+      "notable_moments": "specific step references and what happened",
+      "issues_encountered": ["list of specific issues this persona hit"],
       "key_screenshot_step": null
     }
   ],
 
   "recommendations": [
-    {"rank": 1, "action": "", "impact": ""}
+    {"rank": 1, "action": "detailed recommendation", "impact": "estimated user impact", "complexity": "easy|medium|hard"}
   ],
 
   "testing_notes": {
@@ -290,6 +328,9 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
 
             steps_summary.append(step_data)
 
+        # Include persona analysis (form/function/purpose verdicts from Gemini Pro)
+        pa = s.get("persona_analysis", {})
+
         return {
             "persona_id": p.get("id"),
             "name": p.get("name"),
@@ -313,6 +354,16 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
                 {"url": e.get("url", "")[:80], "status": e.get("status")}
                 for e in all_network_errors[:5]
             ],
+            # Rich persona analysis from Gemini Pro
+            "persona_analysis": {
+                "form_verdict": pa.get("form_verdict", ""),
+                "function_verdict": pa.get("function_verdict", ""),
+                "purpose_verdict": pa.get("purpose_verdict", ""),
+                "emotional_journey": pa.get("emotional_journey", ""),
+                "would_return": pa.get("would_return"),
+                "trust_level": pa.get("trust_level", "unknown"),
+                "key_quote": pa.get("key_quote", ""),
+            },
         }
 
     # Build payload
@@ -382,7 +433,7 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             f"TEST DATA:\n{payload}"
         )
 
-        # Gemini 3.1 Pro with thinking + structured JSON output
+        # Gemini Pro with thinking + structured JSON output — expanded for detailed reports
         response = await asyncio.to_thread(
             client.models.generate_content,
             model=REPORT_MODEL,
@@ -390,8 +441,8 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             config=GenerateContentConfig(
                 system_instruction=GEMINI_REPORT_PROMPT,
                 response_mime_type="application/json",
-                thinking_config={"thinking_budget": 16384},
-                max_output_tokens=16000,
+                thinking_config={"thinking_budget": 24576},
+                max_output_tokens=32000,
             ),
         )
 
@@ -416,6 +467,9 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
 
         report["narrative"] = {
             "executive_summary": narrative.get("thirty_second_summary", ""),
+            "form_analysis": narrative.get("form_analysis", ""),
+            "function_analysis": narrative.get("function_analysis", ""),
+            "purpose_analysis": narrative.get("purpose_analysis", ""),
             "persona_verdicts": narrative.get("persona_verdicts", []),
             "top_issues": narrative.get("whats_broken", []),
             "what_works": narrative.get("whats_good", []),

@@ -86,6 +86,7 @@ interface CategoryScore {
   score: number;
   reasoning?: string;
   one_liner?: string;
+  detail?: string;
   key_evidence?: string[];
 }
 
@@ -93,11 +94,23 @@ interface PersonaVerdict {
   persona_id: string;
   persona_name: string;
   name?: string;
+  age?: number;
   would_recommend: boolean;
+  would_return?: boolean;
+  trust_level?: string;
   narrative: string;
   outcome: string;
   category?: string;
   primary_barrier: string | null;
+  steps_taken?: number;
+  time_seconds?: number;
+  emotional_journey?: string;
+  key_quote?: string;
+  form_verdict?: string;
+  function_verdict?: string;
+  purpose_verdict?: string;
+  notable_moments?: string;
+  issues_encountered?: string[];
 }
 
 interface TopIssue {
@@ -107,8 +120,10 @@ interface TopIssue {
   category: string;
   description: string;
   affected_personas?: string[];
+  persona_experiences?: string;
   fix?: string;
   impact_estimate?: string;
+  implementation_complexity?: string;
 }
 
 interface Report {
@@ -125,10 +140,13 @@ interface Report {
   category_scores?: Record<string, CategoryScore>;
   narrative?: {
     executive_summary?: string;
+    form_analysis?: string;
+    function_analysis?: string;
+    purpose_analysis?: string;
     persona_verdicts?: PersonaVerdict[];
     top_issues?: TopIssue[];
-    what_works?: Array<{ title: string; detail: string; personas_who_benefited?: string[] }>;
-    what_doesnt_work?: Array<{ title: string; detail: string; personas_who_suffered?: string[] }>;
+    what_works?: Array<{ title: string; detail: string; benefited?: string[]; personas_who_benefited?: string[] }>;
+    what_doesnt_work?: Array<{ title: string; detail: string; persona_experiences?: string; personas_who_suffered?: string[] }>;
     accessibility_audit?: {
       total_violations?: number;
       critical?: number;
@@ -455,6 +473,9 @@ export default function TestPage() {
         next.set(agentId, { b64, step: existing?.step || 0 });
         return next;
       });
+    } else if (p === "swarming" && (msg.type as string) === "log") {
+      const level = (msg.level as string) || "info";
+      addLog(level as LogEntry["level"], (msg.message as string) || "");
     } else if (p === "reporting" && status === "started") {
       setPhase("reporting");
       addLog("info", "generating report...");
@@ -486,14 +507,36 @@ export default function TestPage() {
   return (
     <div className="min-h-screen relative" style={{ backgroundColor: "var(--bg-base)" }}>
       {/* Subtle flow field — theme continuity */}
-      <div className="fixed inset-0 z-0 opacity-[0.3]">
-        <NeuralBackground color="#e8a44a" trailOpacity={0.06} particleCount={200} speed={0.3} />
-      </div>
-      <div
+      <motion.div
+        className="fixed inset-0 z-0"
+        animate={{ opacity: phase === "reporting" ? 0.85 : phase === "swarming" ? 0.6 : 0.5 }}
+        transition={{ duration: 2 }}
+      >
+        <NeuralBackground
+          color="#e8a44a"
+          trailOpacity={0.05}
+          particleCount={350}
+          speed={0.5}
+          intensity={
+            phase === "connecting" ? 0.2 :
+            phase === "crawling" ? 0.4 :
+            phase === "swarming" ? 0.7 :
+            phase === "reporting" ? 1.0 :
+            0.3
+          }
+          orbit={phase === "reporting"}
+        />
+      </motion.div>
+      <motion.div
         className="fixed inset-0 z-[1] pointer-events-none"
-        style={{
-          background: "radial-gradient(ellipse at 50% 30%, transparent 0%, rgba(10,10,12,0.6) 40%, rgba(10,10,12,0.95) 100%)",
+        animate={{
+          background: phase === "reporting"
+            ? "radial-gradient(ellipse at 50% 45%, transparent 0%, rgba(10,10,12,0.05) 40%, rgba(10,10,12,0.4) 100%)"
+            : phase === "swarming"
+            ? "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.15) 45%, rgba(10,10,12,0.65) 100%)"
+            : "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.2) 45%, rgba(10,10,12,0.7) 100%)",
         }}
+        transition={{ duration: 2 }}
       />
 
       {/* Header */}
@@ -562,45 +605,67 @@ export default function TestPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="max-w-[1100px] mx-auto"
+            className="max-w-[760px] mx-auto"
           >
-            {/* Crawl stats ribbon */}
+            {/* Crawl intel */}
             {crawlData && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6"
+                className="mb-6"
               >
-                {[
-                  { label: "Links", value: crawlData.links_count || 0 },
-                  { label: "Forms", value: crawlData.forms_count || 0 },
-                  { label: "Violations", value: crawlData.accessibility_violations_count || 0, warn: true },
-                  { label: "Load Time", value: `${((crawlData.load_time_ms || 0) / 1000).toFixed(1)}s` },
-                ].map((item) => (
-                  <div key={item.label} className="glass-card p-4 text-center glass-card-hover" style={{ borderRadius: "10px" }}>
-                    <div className="font-mono text-[20px] font-bold" style={{ color: item.warn && typeof item.value === "number" && item.value > 0 ? "var(--status-fail)" : "var(--text-primary)" }}>
-                      {item.value}
-                    </div>
-                    <div className="font-mono text-[9px] uppercase tracking-[1.5px] mt-1" style={{ color: "var(--text-muted)" }}>{item.label}</div>
+                {/* Title + load time */}
+                <div className="flex items-baseline justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    {crawlData.page_title && (
+                      <h2 className="text-[16px] font-semibold truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                        {crawlData.page_title.replace(/[\u{1F300}-\u{1FAD6}\u{1FA70}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, "").trim()}
+                      </h2>
+                    )}
                   </div>
-                ))}
+                  <div className="flex items-baseline gap-1.5 shrink-0 ml-4">
+                    <span className="text-[20px] font-bold tabular-nums leading-none" style={{ fontFamily: "var(--font-display)", color: (crawlData.load_time_ms || 0) > 3000 ? "var(--status-warn)" : "var(--text-primary)" }}>
+                      {((crawlData.load_time_ms || 0) / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stat pills */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { val: crawlData.links_count || 0, label: "links" },
+                    { val: crawlData.forms_count || 0, label: "forms" },
+                    { val: crawlData.buttons_count || 0, label: "buttons" },
+                  ].map((s) => (
+                    <div key={s.label} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+                      <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{s.val}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{s.label}</span>
+                    </div>
+                  ))}
+                  {(crawlData.accessibility_violations_count || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}>
+                      <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>{crawlData.accessibility_violations_count}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--status-fail)", opacity: 0.7 }}>violations</span>
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
 
-            {/* ── Global progress bar ── */}
+            {/* ── Progress — thin ambient bar ── */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[10px] uppercase tracking-[2px]" style={{ color: "var(--text-muted)" }}>
-                  {phase === "connecting" ? "Connecting" : phase === "crawling" ? "Crawling Site" : phase === "reporting" ? "Generating Report" : "Agents Running"}
+                <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                  {phase === "connecting" ? "Connecting..." : phase === "crawling" ? "Scanning site..." : phase === "reporting" ? "Writing report..." : `${sortedAgents.filter(a => a.status === "running").length} agents active`}
                 </span>
-                <span className="font-mono text-[10px] tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
                   {doneCount}/{totalAgents}
                 </span>
               </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "var(--bg-surface)" }}>
+              <div className="h-[2px] rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
                 <motion.div
                   className="h-full rounded-full"
-                  style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 12px rgba(232,164,74,0.4)" }}
+                  style={{ backgroundColor: "var(--accent)" }}
                   initial={{ width: 0 }}
                   animate={{ width: `${(doneCount / totalAgents) * 100}%` }}
                   transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
@@ -608,7 +673,7 @@ export default function TestPage() {
               </div>
             </div>
 
-            {/* ── Live Browser Viewer — crawling phase ── */}
+            {/* ── Live Browser Viewer — crawling phase: show embedded site ── */}
             {phase === "crawling" && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
@@ -620,6 +685,7 @@ export default function TestPage() {
                   agentName="Crawler"
                   step={crawlStep || undefined}
                   url={testUrl}
+                  showEmbed={!crawlScreenshot}
                 />
               </motion.div>
             )}
@@ -635,23 +701,17 @@ export default function TestPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)" }} />
-                    <span className="text-[10px] uppercase tracking-[0.12em] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                      {sortedAgents.filter(a => a.status === "running").length} browsers active
+                    <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>
+                      Watching <strong style={{ color: "var(--text-primary)" }}>{selectedAgent.name}</strong>
                     </span>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
-                      {liveScreenshots.size} screenshots captured
-                    </span>
-                    {annotatedScreenshots.size > 0 && (
-                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ color: "#ef4444", backgroundColor: "rgba(239,68,68,0.1)" }}>
-                        {annotatedScreenshots.size} annotated
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                    step {liveScreenshots.get(selectedAgent.id)?.step || 0}
+                  </span>
                 </div>
                 <LiveBrowserViewer
                   screenshot={liveScreenshots.get(selectedAgent.id)?.b64}
+                  fallbackScreenshot={crawlScreenshot ?? undefined}
                   agentName={selectedAgent.name}
                   step={liveScreenshots.get(selectedAgent.id)?.step}
                   url={testUrl}
@@ -660,121 +720,92 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* ── Agent Grid — live cards showing each Playwright agent ── */}
-            {(phase === "swarming" || phase === "crawling") && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-6">
-                <AnimatePresence mode="popLayout">
-                  {sortedAgents.map((agent, idx) => (
-                    <motion.div
-                      key={agent.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      transition={{ delay: idx * 0.04, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                      onClick={() => setSelectedAgentId(agent.id)}
-                      className="group cursor-pointer glass-card overflow-hidden transition-all duration-300"
-                      style={{
-                        borderRadius: "12px",
-                        borderColor: selectedAgentId === agent.id ? "rgba(232,164,74, 0.3)" : undefined,
-                        boxShadow: agent.status === "running" ? "0 0 20px rgba(34,197,94,0.06)" : undefined,
-                      }}
-                    >
-                      {/* Agent header */}
-                      <div className="flex items-center gap-2.5 px-3.5 py-2.5" style={{ borderBottom: "1px solid rgba(28,28,32, 0.4)" }}>
-                        {/* Status dot with pulse */}
-                        <div className="relative">
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0 transition-all duration-300" style={{
-                            backgroundColor:
-                              agent.status === "running" ? "var(--status-pass)" :
-                              agent.status === "complete" ? "var(--cat-accessibility)" :
-                              agent.status === "blocked" ? "var(--status-fail)" :
-                              agent.status === "stuck" ? "var(--status-warn)" : "var(--border-default)",
-                          }} />
-                          {agent.status === "running" && (
-                            <div className="absolute inset-0 w-2.5 h-2.5 rounded-full animate-ping" style={{ backgroundColor: "var(--status-pass)", opacity: 0.4 }} />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-mono text-[11px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>{agent.name}</div>
-                          <div className="font-mono text-[9px]" style={{ color: catColor(agent.category) }}>{agent.category}</div>
-                        </div>
-                        <div className="font-mono text-[9px] px-1.5 py-0.5 rounded-md shrink-0" style={{
-                          backgroundColor:
-                            agent.status === "running" ? "rgba(34,197,94,0.1)" :
-                            agent.status === "complete" ? "rgba(59,130,246,0.1)" :
-                            agent.status === "blocked" ? "rgba(232,164,74,0.1)" :
-                            "rgba(30,34,50,0.5)",
-                          color:
-                            agent.status === "running" ? "var(--status-pass)" :
-                            agent.status === "complete" ? "var(--cat-accessibility)" :
-                            agent.status === "blocked" ? "var(--status-fail)" :
-                            agent.status === "stuck" ? "var(--status-warn)" : "var(--text-muted)",
-                        }}>
-                          {agent.status === "running" ? `step ${agent.steps.length}` :
-                           agent.status === "complete" ? `${((agent.timeMs || 0) / 1000).toFixed(1)}s` :
-                           agent.status}
-                        </div>
-                      </div>
+            {/* ── Agent roster — compact persona-driven layout ── */}
+            {(phase === "swarming" || phase === "crawling") && sortedAgents.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                    Agents
+                  </span>
+                  <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                    {sortedAgents.filter(a => a.status === "running").length} active / {sortedAgents.filter(a => a.status === "complete").length} done
+                  </span>
+                </div>
 
-                      {/* Live step feed — last 4 steps */}
-                      <div className="px-3 py-2 min-h-[72px] max-h-[96px] overflow-hidden">
-                        {agent.steps.length > 0 ? (
-                          <div className="space-y-1">
-                            {agent.steps.slice(-4).map((step) => (
-                              <motion.div
-                                key={step.step}
-                                initial={{ opacity: 0, x: -8 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                className="flex gap-1.5 font-mono text-[10px] items-start"
-                              >
-                                <span className="w-3 text-right shrink-0 tabular-nums" style={{ color: "var(--border-default)" }}>{step.step}</span>
-                                <span className="shrink-0 font-semibold" style={{
-                                  color: step.result === "success" ? "var(--status-pass)" : step.result === "fail" ? "var(--status-fail)" : "var(--status-warn)",
-                                }}>
-                                  {step.action}
-                                </span>
-                                <span className="truncate" style={{ color: "var(--text-muted)" }}>{step.target}</span>
-                              </motion.div>
-                            ))}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5">
+                  <AnimatePresence mode="popLayout">
+                    {sortedAgents.map((agent, idx) => (
+                      <motion.div
+                        key={agent.id}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ delay: idx * 0.02, duration: 0.3 }}
+                        onClick={() => setSelectedAgentId(agent.id)}
+                        className="group cursor-pointer relative overflow-hidden rounded-lg px-3 py-2.5 transition-all duration-200"
+                        style={{
+                          backgroundColor: selectedAgentId === agent.id ? "rgba(232,164,74,0.06)" : "var(--bg-surface)",
+                          border: `1px solid ${selectedAgentId === agent.id ? "rgba(232,164,74,0.2)" : "var(--border-default)"}`,
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {/* Avatar */}
+                          <div
+                            className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0"
+                            style={{
+                              backgroundColor: `${catColor(agent.category)}12`,
+                              color: catColor(agent.category),
+                              fontFamily: "var(--font-display)",
+                              border: `1px solid ${catColor(agent.category)}25`,
+                            }}
+                          >
+                            {initials(agent.name)}
                           </div>
-                        ) : (
-                          <div className="flex items-center justify-center h-full">
-                            {agent.status === "waiting" ? (
-                              <span className="font-mono text-[10px]" style={{ color: "var(--border-default)" }}>queued</span>
-                            ) : (
-                              <div className="flex gap-1">
-                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)", animationDelay: "0ms" }} />
-                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)", animationDelay: "200ms" }} />
-                                <div className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)", animationDelay: "400ms" }} />
-                              </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[11px] font-semibold truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                              {agent.name.split(" ")[0]}
+                            </div>
+                          </div>
+                          {/* Status indicator */}
+                          <div className="relative shrink-0">
+                            <div className="w-1.5 h-1.5 rounded-full" style={{
+                              backgroundColor:
+                                agent.status === "running" ? "var(--status-pass)" :
+                                agent.status === "complete" ? "var(--cat-accessibility)" :
+                                agent.status === "blocked" ? "var(--status-fail)" :
+                                agent.status === "stuck" ? "var(--status-warn)" : "var(--border-default)",
+                            }} />
+                            {agent.status === "running" && (
+                              <div className="absolute inset-0 w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: "var(--status-pass)", opacity: 0.4 }} />
                             )}
                           </div>
-                        )}
-                      </div>
-
-                      {/* Findings count badge */}
-                      {agent.findings.length > 0 && (
-                        <div className="px-3 pb-2 flex items-center gap-1.5">
-                          <AlertTriangle size={10} style={{ color: "var(--accent)" }} />
-                          <span className="font-mono text-[9px] font-semibold" style={{ color: "var(--accent)" }}>
-                            {agent.findings.length} issue{agent.findings.length !== 1 ? "s" : ""}
-                          </span>
                         </div>
-                      )}
 
-                      {/* Mini progress bar per agent */}
-                      <div className="h-0.5" style={{
-                        backgroundColor: agent.status === "complete" ? "var(--cat-accessibility)" :
-                                         agent.status === "running" ? "var(--status-pass)" :
-                                         agent.status === "blocked" ? "var(--status-fail)" :
-                                         "var(--bg-surface)",
-                        opacity: agent.status === "waiting" ? 0.2 : 0.6,
-                        transition: "all 0.4s ease",
-                      }} />
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
+                        {/* Status text */}
+                        <div className="text-[9px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                          {agent.status === "running" ? (
+                            agent.steps.length > 0 ? `step ${agent.steps.length} · ${agent.steps[agent.steps.length-1]?.action}` : "starting..."
+                          ) : agent.status === "complete" ? (
+                            <span style={{ color: "var(--cat-accessibility)" }}>{((agent.timeMs || 0) / 1000).toFixed(1)}s · {agent.issuesFound || 0} issues</span>
+                          ) : agent.status === "blocked" ? (
+                            <span style={{ color: "var(--status-fail)" }}>blocked</span>
+                          ) : (
+                            "queued"
+                          )}
+                        </div>
+
+                        {/* Bottom accent line */}
+                        <div className="absolute bottom-0 left-0 right-0 h-px" style={{
+                          backgroundColor: agent.status === "running" ? "var(--status-pass)" :
+                                           agent.status === "complete" ? "var(--cat-accessibility)" :
+                                           agent.status === "blocked" ? "var(--status-fail)" : "transparent",
+                          opacity: 0.4,
+                        }} />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
               </div>
             )}
 
@@ -787,42 +818,48 @@ export default function TestPage() {
                   exit={{ opacity: 0, height: 0 }}
                   className="mb-6 overflow-hidden"
                 >
-                  <div className="glass-card overflow-hidden" style={{ borderRadius: "12px", borderColor: "rgba(232,164,74,0.15)" }}>
-                    {/* Faux browser bar */}
-                    <div className="flex items-center gap-2 px-4 py-2.5" style={{ backgroundColor: "rgba(10, 11, 15, 0.8)", borderBottom: "1px solid rgba(28,28,32, 0.5)" }}>
-                      <div className="flex gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--accent)" }} />
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-warn)" }} />
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "var(--status-pass)" }} />
+                  <div className="overflow-hidden rounded-xl" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid rgba(232,164,74,0.12)" }}>
+                    {/* Agent identity bar */}
+                    <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-default)" }}>
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                        style={{ backgroundColor: `${catColor(selectedAgent.category)}15`, color: catColor(selectedAgent.category), fontFamily: "var(--font-display)" }}
+                      >
+                        {initials(selectedAgent.name)}
                       </div>
-                      <div className="flex-1 font-mono text-[11px] text-center font-semibold" style={{ color: "var(--text-primary)" }}>
-                        {selectedAgent.name}
-                        {selectedAgent.status === "running" && (
-                          <span className="ml-2 font-normal" style={{ color: "var(--status-pass)" }}>testing...</span>
-                        )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                          {selectedAgent.name}{selectedAgent.age ? `, ${selectedAgent.age}` : ""}
+                        </div>
+                        <div className="text-[11px] leading-snug" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                          {selectedAgent.description}
+                        </div>
                       </div>
-                      <button onClick={() => setSelectedAgentId(null)} className="font-mono text-[10px] px-2 py-0.5 rounded" style={{ color: "var(--text-muted)" }}>
+                      <button onClick={() => setSelectedAgentId(null)} className="text-[10px] px-2 py-1 rounded cursor-pointer" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", backgroundColor: "var(--bg-elevated)" }}>
                         close
                       </button>
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-0">
-                      {/* Full step log */}
-                      <div className="p-3 max-h-[280px] overflow-y-auto" style={{ borderRight: "1px solid rgba(30,34,50,0.3)" }}>
-                        <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "var(--text-muted)" }}>Activity Log</div>
-                        <div className="space-y-1">
+                      {/* Step trace */}
+                      <div className="p-3 max-h-[240px] overflow-y-auto" style={{ borderRight: "1px solid var(--border-default)" }}>
+                        <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Trace</div>
+                        <div className="space-y-0.5">
                           {selectedAgent.steps.map((step) => (
                             <motion.div
                               key={step.step}
-                              initial={{ opacity: 0, x: -6 }}
+                              initial={{ opacity: 0, x: -4 }}
                               animate={{ opacity: 1, x: 0 }}
-                              className="flex gap-2 font-mono text-[10px]"
+                              className="flex gap-2 text-[10px] py-0.5"
                             >
-                              <span className="w-4 text-right shrink-0 tabular-nums" style={{ color: "var(--border-default)" }}>{step.step}</span>
-                              <span className="shrink-0 w-12 font-semibold" style={{ color: step.result === "success" ? "var(--status-pass)" : "var(--status-fail)" }}>
+                              <span className="w-4 text-right shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{step.step}</span>
+                              <span className="shrink-0 font-semibold" style={{
+                                fontFamily: "var(--font-mono)",
+                                color: step.result === "success" ? "var(--status-pass)" : "var(--status-fail)",
+                              }}>
                                 {step.action}
                               </span>
-                              <span className="truncate" style={{ color: "var(--text-muted)" }}>{step.target}</span>
+                              <span className="truncate" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{step.target}</span>
                             </motion.div>
                           ))}
                           {selectedAgent.status === "running" && (
@@ -835,27 +872,31 @@ export default function TestPage() {
                         </div>
                       </div>
 
-                      {/* Findings + info */}
-                      <div className="p-3 max-h-[280px] overflow-y-auto">
-                        <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "var(--text-muted)" }}>Agent Info</div>
-                        <div className="font-mono text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-muted)" }}>{selectedAgent.description}</div>
-                        {selectedAgent.findings.length > 0 && (
+                      {/* Findings */}
+                      <div className="p-3 max-h-[240px] overflow-y-auto">
+                        {selectedAgent.findings.length > 0 ? (
                           <>
-                            <div className="font-mono text-[9px] uppercase tracking-[1.5px] mb-2" style={{ color: "var(--accent)" }}>
-                              Findings ({selectedAgent.findings.length})
+                            <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                              {selectedAgent.findings.length} finding{selectedAgent.findings.length !== 1 ? "s" : ""}
                             </div>
-                            <div className="space-y-1.5">
+                            <div className="space-y-2">
                               {selectedAgent.findings.map((f, i) => (
-                                <div key={i} className="flex gap-2 font-mono text-[10px]">
-                                  <AlertTriangle size={10} className="shrink-0 mt-0.5" style={{ color: f.type === "issue" ? "var(--status-fail)" : "var(--status-warn)" }} />
+                                <div key={i} className="flex gap-2">
+                                  <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: f.type === "critical" ? "var(--status-fail)" : "var(--status-warn)" }} />
                                   <div>
-                                    <div style={{ color: "var(--text-primary)" }}>{f.title}</div>
-                                    <div style={{ color: "var(--text-muted)" }}>{f.detail}</div>
+                                    <div className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{f.title}</div>
+                                    <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{f.detail}</div>
                                   </div>
                                 </div>
                               ))}
                             </div>
                           </>
+                        ) : (
+                          <div className="flex items-center justify-center h-full py-8">
+                            <span className="text-[11px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                              {selectedAgent.status === "running" ? "Testing in progress..." : "No issues found"}
+                            </span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -865,11 +906,13 @@ export default function TestPage() {
             </AnimatePresence>
 
             {/* ── Event log ── */}
-            <div ref={logRef} className="glass-card p-3 max-h-40 overflow-y-auto font-mono text-[10px] mb-4" style={{ borderRadius: "10px" }}>
-              {logs.slice(0, 50).map((log, i) => (
-                <div key={i} className="flex gap-2 mb-0.5 leading-relaxed">
-                  <span className="shrink-0" style={{ color: "var(--border-default)" }}>{log.time}</span>
+            <div ref={logRef} className="p-3 max-h-32 overflow-y-auto rounded-lg mb-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+              {logs.slice(0, 40).map((log, i) => (
+                <div key={i} className="flex gap-2 mb-0.5 leading-relaxed text-[10px]">
+                  <span className="shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{log.time}</span>
                   <span style={{
+                    fontFamily: log.level === "error" || log.level === "warning" ? "var(--font-display)" : "var(--font-body)",
+                    fontWeight: log.level === "error" ? 600 : 400,
                     color: log.level === "error" ? "var(--status-fail)" :
                       log.level === "warning" ? "var(--status-warn)" :
                         log.level === "success" ? "var(--status-pass)" : "var(--text-muted)"
@@ -881,48 +924,99 @@ export default function TestPage() {
               <span className="cursor-blink" />
             </div>
 
-            {/* ── Cinematic Reporting Phase ── */}
+            {/* ── Cinematic Reporting Phase — orb + timer ── */}
             {phase === "reporting" && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="flex flex-col items-center py-16"
+                className="flex flex-col items-center justify-center py-24"
               >
-                {/* Animated counter loader */}
+                {/* Orb */}
+                <div className="relative w-[160px] h-[160px] mb-8">
+                  <motion.div
+                    className="absolute inset-0 rounded-full"
+                    style={{ border: "1px solid rgba(232,164,74,0.15)" }}
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 20, ease: "linear" }}
+                  />
+                  <motion.div
+                    className="absolute rounded-full"
+                    style={{ inset: "20px", border: "1px solid rgba(232,164,74,0.1)" }}
+                    animate={{ rotate: -360 }}
+                    transition={{ repeat: Infinity, duration: 15, ease: "linear" }}
+                  />
+                  <motion.div
+                    className="absolute rounded-full"
+                    style={{ inset: "40px", border: "1px solid rgba(232,164,74,0.2)" }}
+                    animate={{ scale: [1, 1.05, 1], opacity: [0.3, 0.6, 0.3] }}
+                    transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }}
+                  />
+                  <motion.div
+                    className="absolute rounded-full"
+                    style={{
+                      inset: "55px",
+                      background: "radial-gradient(circle, rgba(232,164,74,0.2) 0%, rgba(232,164,74,0.05) 60%, transparent 100%)",
+                    }}
+                    animate={{ scale: [1, 1.15, 1], opacity: [0.6, 1, 0.6] }}
+                    transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+                  />
+                  {/* Timer in the center of the orb */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <motion.span
+                      key={elapsed}
+                      initial={{ scale: 1.1, opacity: 0.6 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                      className="text-[28px] font-bold tabular-nums"
+                      style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}
+                    >
+                      {elapsed}
+                    </motion.span>
+                  </div>
+                  {/* Orbiting dots */}
+                  {[0, 1, 2].map((i) => (
+                    <motion.div
+                      key={i}
+                      className="absolute w-1 h-1 rounded-full"
+                      style={{
+                        backgroundColor: "var(--accent)",
+                        top: "50%", left: "50%",
+                        marginTop: "-2px", marginLeft: "-2px",
+                      }}
+                      animate={{
+                        x: [
+                          Math.cos((i / 3) * Math.PI * 2) * 76,
+                          Math.cos((i / 3) * Math.PI * 2 + Math.PI * 2) * 76,
+                        ],
+                        y: [
+                          Math.sin((i / 3) * Math.PI * 2) * 76,
+                          Math.sin((i / 3) * Math.PI * 2 + Math.PI * 2) * 76,
+                        ],
+                      }}
+                      transition={{ repeat: Infinity, duration: 6 + i * 2, ease: "linear" }}
+                    />
+                  ))}
+                </div>
+
                 <motion.div
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ type: "spring", damping: 15 }}
-                  className="mb-8"
-                >
-                  <CounterLoader color="var(--accent)" />
-                </motion.div>
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
+                  transition={{ delay: 0.2 }}
                 >
-                  <span className="font-mono text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>Analyzing results</span>
+                  <span className="text-[16px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                    Generating report
+                  </span>
                 </motion.div>
+
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ delay: 0.5 }}
-                  className="font-mono text-[11px] mt-2"
-                  style={{ color: "var(--text-muted)" }}
+                  transition={{ delay: 0.4 }}
+                  className="text-[11px] mt-2"
+                  style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}
                 >
-                  {doneCount} agents tested · generating report with AI
+                  {doneCount} agents &middot; {issueCount} issues
                 </motion.div>
-                {/* Pulsing orb */}
-                <motion.div
-                  className="w-20 h-20 rounded-full mt-8"
-                  style={{
-                    background: "radial-gradient(circle, rgba(232,164,74,0.15) 0%, transparent 70%)",
-                    boxShadow: "0 0 60px rgba(232,164,74,0.1)",
-                  }}
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] }}
-                  transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-                />
               </motion.div>
             )}
           </motion.div>
@@ -934,32 +1028,69 @@ export default function TestPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-            className="max-w-[680px] mx-auto mt-4 pb-16"
+            className="max-w-[960px] mx-auto mt-4 pb-16"
           >
-            {/* ── Score Hero ── */}
-            <div className="mb-16 text-center">
-              <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12, delay: 0.15 }}>
-                <span
-                  className="text-[96px] font-bold leading-none tracking-tighter"
-                  style={{
-                    fontFamily: "var(--font-display)",
-                    color: scoreColor(report.score?.overall ?? 0),
-                  }}
+            {/* ── Score Hero — horizontal layout ── */}
+            <div className="mb-12">
+              <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-8 items-center">
+                {/* Score */}
+                <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12, delay: 0.15 }} className="text-center sm:text-left">
+                  <span
+                    className="text-[80px] font-bold leading-none tracking-tighter"
+                    style={{ fontFamily: "var(--font-display)", color: scoreColor(report.score?.overall ?? 0) }}
+                  >
+                    {animatedScore}
+                  </span>
+                  <div className="flex items-center gap-3 text-[11px] mt-2" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                    <span>{report.stats?.total || 0} personas</span>
+                    <span style={{ color: "var(--border-default)" }}>/</span>
+                    <span style={{ color: issueCount > 5 ? "var(--status-fail)" : "var(--text-muted)" }}>{issueCount} issues</span>
+                    <span style={{ color: "var(--border-default)" }}>/</span>
+                    <span>{elapsed}s</span>
+                  </div>
+                </motion.div>
+                {/* Reasoning */}
+                {report.score?.reasoning && (
+                  <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }}>
+                    <p className="text-[14px] leading-[1.7]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                      {report.score.reasoning}
+                    </p>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Quick action bar — copy to LLM */}
+              <div className="flex items-center gap-3 mt-6 pt-6" style={{ borderTop: "1px solid var(--border-default)" }}>
+                {report.fix_prompt && (
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
+                      color: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
+                      border: `1px solid ${copiedPrompt ? "rgba(74,222,128,0.2)" : "rgba(232,164,74,0.15)"}`,
+                    }}
+                  >
+                    <Copy size={11} />
+                    {copiedPrompt ? "Copied to clipboard" : "Copy fix prompt for LLM"}
+                  </button>
+                )}
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
+                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
                 >
-                  {animatedScore}
-                </span>
-              </motion.div>
-              {report.score?.reasoning && (
-                <p className="text-[15px] leading-[1.7] mt-5 max-w-[520px] mx-auto" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
-                  {report.score.reasoning}
-                </p>
-              )}
-              <div className="flex items-center justify-center gap-4 text-[11px] mt-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                <span>{report.stats?.total || 0} personas</span>
-                <span style={{ color: "var(--border-default)" }}>/</span>
-                <span style={{ color: issueCount > 5 ? "var(--status-fail)" : "var(--text-muted)" }}>{issueCount} issues</span>
-                <span style={{ color: "var(--border-default)" }}>/</span>
-                <span>{elapsed}s</span>
+                  <Copy size={11} />
+                  {copied ? "Copied" : "Share link"}
+                </button>
+                <a
+                  href="/"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"
+                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
+                >
+                  Test another site
+                </a>
               </div>
             </div>
 
@@ -967,7 +1098,7 @@ export default function TestPage() {
             {report.category_scores && (
               <TooltipProvider delayDuration={100}>
                 <div className="mb-16">
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4">
                     {(["accessibility", "security", "usability", "mobile", "performance", "ai_readability"] as const).map((cat, idx) => {
                       const cs = report.category_scores?.[cat];
                       if (!cs) return null;
@@ -1003,9 +1134,9 @@ export default function TestPage() {
                               </div>
                             </motion.div>
                           </TooltipTrigger>
-                          <TooltipContent className="max-w-[280px]">
+                          <TooltipContent className="max-w-[340px]">
                             <p className="text-[11px] font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{label} — {cs.score}/100</p>
-                            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{cs.reasoning || cs.one_liner}</p>
+                            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>{cs.detail || cs.reasoning || cs.one_liner}</p>
                           </TooltipContent>
                         </Tooltip>
                       );
@@ -1025,31 +1156,94 @@ export default function TestPage() {
               </div>
             )}
 
+            {/* ── Form / Function / Purpose Analysis ── */}
+            {(report.narrative?.form_analysis || report.narrative?.function_analysis || report.narrative?.purpose_analysis) && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-6" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Deep Analysis</div>
+                <div className="space-y-6">
+                  {report.narrative?.form_analysis && (
+                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(139, 92, 246, 0.03)", border: "1px solid rgba(139, 92, 246, 0.1)" }}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Eye size={13} style={{ color: "#8b5cf6" }} />
+                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "#8b5cf6" }}>Form &mdash; Visual Design</span>
+                      </div>
+                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
+                        {report.narrative.form_analysis}
+                      </p>
+                    </div>
+                  )}
+                  {report.narrative?.function_analysis && (
+                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(59, 130, 246, 0.03)", border: "1px solid rgba(59, 130, 246, 0.1)" }}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Gauge size={13} style={{ color: "#3b82f6" }} />
+                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "#3b82f6" }}>Function &mdash; Does It Work?</span>
+                      </div>
+                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
+                        {report.narrative.function_analysis}
+                      </p>
+                    </div>
+                  )}
+                  {report.narrative?.purpose_analysis && (
+                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(232, 164, 74, 0.03)", border: "1px solid rgba(232, 164, 74, 0.1)" }}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Users size={13} style={{ color: "var(--accent)" }} />
+                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>Purpose &mdash; Does It Achieve Its Goal?</span>
+                      </div>
+                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
+                        {report.narrative.purpose_analysis}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* ── Top Issues ── */}
             {report.narrative?.top_issues && report.narrative.top_issues.length > 0 && (
               <div className="mb-14">
                 <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Issues</div>
-                <div className="space-y-5">
-                  {report.narrative.top_issues.map((issue: { severity?: string; title?: string; description?: string; fix?: string; affected_personas?: string[] }, i: number) => (
+                <div className="space-y-3">
+                  {report.narrative.top_issues.map((issue: TopIssue, i: number) => (
                     <motion.div
                       key={i}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.04 }}
-                      className="flex gap-3"
+                      className="flex gap-3 p-4 rounded-lg"
+                      style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border-default)" }}
                     >
                       <div
-                        className="w-1.5 h-1.5 rounded-full mt-2 shrink-0"
+                        className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
                         style={{ backgroundColor: severityColor(issue.severity?.toLowerCase() || "minor") }}
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2">
+                        <div className="flex items-baseline gap-2 mb-1">
                           <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{issue.title}</span>
                           <span className="text-[9px] uppercase tracking-wider shrink-0" style={{ fontFamily: "var(--font-display)", color: severityColor(issue.severity?.toLowerCase() || "minor") }}>{issue.severity}</span>
+                          {issue.implementation_complexity && (
+                            <span className="text-[8px] px-1.5 py-0.5 rounded shrink-0" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.04)", color: "var(--text-muted)" }}>
+                              {issue.implementation_complexity} fix
+                            </span>
+                          )}
                         </div>
-                        <p className="text-[12px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue.description}</p>
+                        <p className="text-[12px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{issue.description}</p>
+                        {issue.persona_experiences && (
+                          <p className="text-[11px] leading-relaxed mt-1.5 italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue.persona_experiences}</p>
+                        )}
+                        {issue.affected_personas && issue.affected_personas.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {issue.affected_personas.map((name, j) => (
+                              <span key={j} className="text-[9px] px-1.5 py-0.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.03)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}>
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {issue.fix && (
-                          <p className="text-[11px] mt-1" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>Fix: {issue.fix}</p>
+                          <p className="text-[11px] mt-2 px-2.5 py-1.5 rounded" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)", backgroundColor: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.08)" }}>
+                            Fix: {issue.fix}
+                          </p>
                         )}
                       </div>
                     </motion.div>
@@ -1058,27 +1252,34 @@ export default function TestPage() {
               </div>
             )}
 
-            {/* ── AI & Search Readiness ── */}
+            {/* ── AI & Search Readiness — primary section ── */}
             {report.ai_seo?.checks && report.ai_seo.checks.length > 0 && (
               <div className="mb-14">
                 <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="flex items-center gap-2 mb-5">
-                  <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>AI & Search Readiness</span>
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-2">
+                    <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>AI & Search Readiness</span>
+                  </div>
+                  {report.ai_seo.ai_readability_score !== undefined && (
+                    <span className="text-[14px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: scoreColor(report.ai_seo.ai_readability_score) }}>
+                      {report.ai_seo.ai_readability_score}/100
+                    </span>
+                  )}
                 </div>
-                <div className="space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {report.ai_seo.checks.map((check: { name: string; pass: boolean; detail: string }, i: number) => (
-                    <div key={i} className="flex items-start gap-3">
+                    <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-lg" style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}>
                       <div className="mt-0.5 shrink-0">
                         {check.pass ? (
-                          <Check size={12} style={{ color: "var(--status-pass)" }} />
+                          <Check size={11} style={{ color: "var(--status-pass)" }} />
                         ) : (
-                          <X size={12} style={{ color: "var(--status-fail)" }} />
+                          <X size={11} style={{ color: "var(--status-fail)" }} />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <span className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: check.pass ? "var(--text-secondary)" : "var(--text-primary)" }}>{check.name}</span>
-                        <span className="text-[11px] ml-2" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{check.detail}</span>
+                        <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: check.pass ? "var(--text-secondary)" : "var(--text-primary)" }}>{check.name}</span>
+                        <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{check.detail}</div>
                       </div>
                     </div>
                   ))}
@@ -1086,101 +1287,346 @@ export default function TestPage() {
               </div>
             )}
 
-            {/* ── Persona Results — compact ── */}
+            {/* ── Persona Results — rich analysis cards ── */}
             {report.narrative?.persona_verdicts && report.narrative.persona_verdicts.length > 0 && (
               <div className="mb-14">
                 <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Personas</div>
-                <div className="space-y-1.5">
-                  {report.narrative.persona_verdicts.map((v: PersonaVerdict, i: number) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: i * 0.03 }}
-                      className="flex items-center gap-3 py-2 cursor-pointer group"
-                      onClick={() => setExpandedPersona(expandedPersona === v.persona_id ? null : v.persona_id)}
-                    >
-                      <div
-                        className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
-                        style={{ backgroundColor: `${catColor(v.category || "")}15`, color: catColor(v.category || ""), fontFamily: "var(--font-display)" }}
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Agent Reports</div>
+                <div className="space-y-4">
+                  {report.narrative.persona_verdicts.map((v: PersonaVerdict, i: number) => {
+                    const session = report.sessions_summary?.find(s => s.persona_id === v.persona_id);
+                    const screenshots = session?.screenshots?.filter(s => s.screenshot_url || s.screenshot_b64) || [];
+                    const agentData = agentList.find(a => a.id === v.persona_id);
+                    const color = catColor(v.category || "");
+                    return (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.03 }}
+                        className="rounded-xl overflow-hidden"
+                        style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}
                       >
-                        {initials(v.name || v.persona_name)}
-                      </div>
-                      <span className="text-[12px] font-medium flex-1 min-w-0 truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                        {v.name || v.persona_name}
-                      </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{
-                        fontFamily: "var(--font-display)",
-                        backgroundColor: v.outcome === "completed" ? "rgba(74,222,128,0.08)" : v.outcome === "blocked" ? "rgba(248,113,113,0.08)" : "rgba(251,191,36,0.08)",
-                        color: v.outcome === "completed" ? "var(--status-pass)" : v.outcome === "blocked" ? "var(--status-fail)" : "var(--status-warn)",
-                      }}>
-                        {v.outcome}
-                      </span>
-                      <ChevronDown size={10} className="shrink-0 transition-transform" style={{ color: "var(--text-muted)", transform: expandedPersona === v.persona_id ? "rotate(180deg)" : "rotate(0deg)" }} />
-                    </motion.div>
-                  ))}
-                  <AnimatePresence>
-                    {expandedPersona && (() => {
-                      const v = report.narrative?.persona_verdicts?.find((p: PersonaVerdict) => p.persona_id === expandedPersona);
-                      if (!v || !v.narrative) return null;
-                      return (
-                        <motion.div
-                          key={expandedPersona}
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <p className="text-[12px] leading-relaxed pl-9 pb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                            {v.narrative}
-                          </p>
-                        </motion.div>
-                      );
-                    })()}
-                  </AnimatePresence>
+                        {/* Header */}
+                        <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-default)", backgroundColor: "rgba(255,255,255,0.01)" }}>
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                            style={{ backgroundColor: `${color}15`, color, fontFamily: "var(--font-display)" }}
+                          >
+                            {initials(v.name || v.persona_name)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                                {v.name || v.persona_name}
+                              </span>
+                              {v.age && <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>age {v.age}</span>}
+                            </div>
+                            <div className="text-[10px] mt-0.5" style={{ fontFamily: "var(--font-mono)", color }}>
+                              {v.category}{v.steps_taken ? ` · ${v.steps_taken} steps` : ""}{v.time_seconds ? ` · ${v.time_seconds}s` : ""}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {v.trust_level && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
+                                fontFamily: "var(--font-display)",
+                                backgroundColor: v.trust_level === "high" ? "rgba(74,222,128,0.08)" : v.trust_level === "medium" ? "rgba(251,191,36,0.08)" : "rgba(248,113,113,0.08)",
+                                color: v.trust_level === "high" ? "var(--status-pass)" : v.trust_level === "medium" ? "var(--status-warn)" : "var(--status-fail)",
+                              }}>
+                                trust: {v.trust_level}
+                              </span>
+                            )}
+                            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
+                              fontFamily: "var(--font-display)",
+                              backgroundColor: v.outcome === "completed" ? "rgba(74,222,128,0.08)" : v.outcome === "blocked" ? "rgba(248,113,113,0.08)" : "rgba(251,191,36,0.08)",
+                              color: v.outcome === "completed" ? "var(--status-pass)" : v.outcome === "blocked" ? "var(--status-fail)" : "var(--status-warn)",
+                            }}>
+                              {v.outcome}
+                            </span>
+                            {v.would_return !== undefined && (
+                              <span className="text-[9px]" style={{ color: v.would_return ? "var(--status-pass)" : "var(--status-fail)" }}>
+                                {v.would_return ? "would return" : "wouldn't return"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Key Quote */}
+                        {v.key_quote && (
+                          <div className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--border-default)", backgroundColor: `${color}04` }}>
+                            <p className="text-[12px] leading-relaxed italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-primary)" }}>
+                              &ldquo;{v.key_quote}&rdquo;
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Body */}
+                        <div className="px-4 py-3">
+                          {/* Emotional journey */}
+                          {v.emotional_journey && (
+                            <p className="text-[11px] leading-relaxed mb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                              {v.emotional_journey}
+                            </p>
+                          )}
+
+                          {/* Narrative */}
+                          {v.narrative && !v.emotional_journey && (
+                            <p className="text-[11px] leading-relaxed mb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                              {v.narrative}
+                            </p>
+                          )}
+
+                          {/* Form / Function / Purpose verdicts */}
+                          {(v.form_verdict || v.function_verdict || v.purpose_verdict) && (
+                            <div className="space-y-2 mb-3">
+                              {v.form_verdict && (
+                                <div className="p-2.5 rounded-lg" style={{ backgroundColor: "rgba(139, 92, 246, 0.03)", border: "1px solid rgba(139, 92, 246, 0.08)" }}>
+                                  <div className="text-[9px] font-semibold uppercase tracking-[0.08em] mb-1" style={{ fontFamily: "var(--font-display)", color: "#8b5cf6" }}>Form</div>
+                                  <p className="text-[11px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{v.form_verdict}</p>
+                                </div>
+                              )}
+                              {v.function_verdict && (
+                                <div className="p-2.5 rounded-lg" style={{ backgroundColor: "rgba(59, 130, 246, 0.03)", border: "1px solid rgba(59, 130, 246, 0.08)" }}>
+                                  <div className="text-[9px] font-semibold uppercase tracking-[0.08em] mb-1" style={{ fontFamily: "var(--font-display)", color: "#3b82f6" }}>Function</div>
+                                  <p className="text-[11px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{v.function_verdict}</p>
+                                </div>
+                              )}
+                              {v.purpose_verdict && (
+                                <div className="p-2.5 rounded-lg" style={{ backgroundColor: "rgba(232, 164, 74, 0.03)", border: "1px solid rgba(232, 164, 74, 0.08)" }}>
+                                  <div className="text-[9px] font-semibold uppercase tracking-[0.08em] mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>Purpose</div>
+                                  <p className="text-[11px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{v.purpose_verdict}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Notable moments */}
+                          {v.notable_moments && (
+                            <p className="text-[10px] leading-relaxed mb-2 pl-2.5" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", borderLeft: `2px solid ${color}` }}>
+                              {v.notable_moments}
+                            </p>
+                          )}
+
+                          {/* Issues encountered */}
+                          {v.issues_encountered && v.issues_encountered.length > 0 && (
+                            <div className="mb-2">
+                              <div className="text-[9px] uppercase tracking-[0.1em] mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>Issues hit</div>
+                              <div className="space-y-0.5">
+                                {v.issues_encountered.slice(0, 4).map((issue, j) => (
+                                  <div key={j} className="flex items-start gap-1.5 text-[10px]">
+                                    <X size={9} className="mt-0.5 shrink-0" style={{ color: "var(--status-fail)" }} />
+                                    <span style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {v.primary_barrier && (
+                            <div className="text-[10px] mb-2 px-2 py-1.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(248,113,113,0.05)", border: "1px solid rgba(248,113,113,0.1)", color: "var(--status-fail)" }}>
+                              {v.primary_barrier}
+                            </div>
+                          )}
+
+                          {/* Agent steps summary */}
+                          {agentData && agentData.steps.length > 0 && (
+                            <details className="mb-2 group">
+                              <summary className="text-[9px] uppercase tracking-[0.1em] cursor-pointer list-none flex items-center gap-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                                <ChevronDown size={10} className="transition-transform group-open:rotate-180" style={{ color: "var(--text-muted)" }} />
+                                {agentData.steps.length} steps taken
+                              </summary>
+                              <div className="space-y-0.5 mt-1.5 pl-3">
+                                {agentData.steps.slice(0, 8).map((step) => (
+                                  <div key={step.step} className="flex gap-1.5 text-[9px]">
+                                    <span className="shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{step.step}</span>
+                                    <span className="shrink-0 font-semibold" style={{
+                                      fontFamily: "var(--font-mono)",
+                                      color: step.result === "success" ? "var(--status-pass)" : "var(--status-fail)",
+                                    }}>
+                                      {step.action}
+                                    </span>
+                                    <span className="truncate" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{step.target}</span>
+                                  </div>
+                                ))}
+                                {agentData.steps.length > 8 && (
+                                  <div className="text-[9px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>+{agentData.steps.length - 8} more</div>
+                                )}
+                              </div>
+                            </details>
+                          )}
+
+                          {/* Screenshots inline */}
+                          {screenshots.length > 0 && (
+                            <div className="flex gap-1.5 mt-2">
+                              {screenshots.slice(0, 3).map((ss, j) => {
+                                const src = ss.screenshot_b64
+                                  ? `data:image/jpeg;base64,${ss.screenshot_b64}`
+                                  : ss.screenshot_url || "";
+                                return (
+                                  <div
+                                    key={j}
+                                    className="flex-1 rounded overflow-hidden cursor-pointer transition-opacity hover:opacity-80"
+                                    style={{ border: "1px solid var(--border-default)" }}
+                                    onClick={() => setLightboxImg(src)}
+                                  >
+                                    <img src={src} alt={`Step ${ss.step}`} className="w-full aspect-[16/10] object-cover object-top" />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* ── Fix Prompt — prominent ── */}
-            {report.fix_prompt && (
+            {/* ── What Works / What Doesn't — side by side ── */}
+            {(report.narrative?.what_works?.length || report.narrative?.what_doesnt_work?.length) ? (
               <div className="mb-14">
                 <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={13} style={{ color: "var(--accent)" }} />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Fix with AI</span>
-                  </div>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium transition-all cursor-pointer"
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
-                      color: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
-                      border: `1px solid ${copiedPrompt ? "rgba(74,222,128,0.2)" : "rgba(232,164,74,0.15)"}`,
-                    }}
-                  >
-                    <Copy size={10} />
-                    {copiedPrompt ? "Copied" : "Copy prompt"}
-                  </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                  {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <CheckCircle2 size={13} style={{ color: "var(--status-pass)" }} />
+                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Works</span>
+                      </div>
+                      <div className="space-y-3">
+                        {report.narrative.what_works.slice(0, 4).map((item, i) => (
+                          <div key={i}>
+                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
+                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <XCircle size={13} style={{ color: "var(--status-fail)" }} />
+                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Doesn&apos;t Work</span>
+                      </div>
+                      <div className="space-y-3">
+                        {report.narrative.what_doesnt_work.slice(0, 4).map((item, i) => (
+                          <div key={i}>
+                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
+                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-[11px] mb-3 leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                  Paste this into ChatGPT, Claude, or Cursor to get code-level fixes for every issue found.
-                </p>
-                <div
-                  className="rounded-lg p-4 max-h-[240px] overflow-y-auto text-[11px] leading-relaxed"
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    color: "var(--text-secondary)",
-                    backgroundColor: "rgba(255,255,255,0.02)",
-                    border: "1px solid rgba(232,164,74,0.1)",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {report.fix_prompt}
+              </div>
+            ) : null}
+
+            {/* ── Accessibility Audit ── */}
+            {report.narrative?.accessibility_audit && (report.narrative.accessibility_audit.total_violations || 0) > 0 && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-5">
+                  <Eye size={14} style={{ color: "var(--cat-accessibility)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Accessibility Audit</span>
+                </div>
+                <div className="flex flex-wrap gap-3 mb-4">
+                  {[
+                    { label: "Critical", val: report.narrative.accessibility_audit.critical || 0, color: "var(--status-fail)" },
+                    { label: "Serious", val: report.narrative.accessibility_audit.serious || 0, color: "var(--status-warn)" },
+                    { label: "Moderate", val: report.narrative.accessibility_audit.moderate || 0, color: "var(--accent)" },
+                    { label: "Minor", val: report.narrative.accessibility_audit.minor_count || 0, color: "var(--text-muted)" },
+                  ].filter(s => s.val > 0).map((s, i) => (
+                    <div key={i} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+                      <span className="text-[13px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: s.color }}>{s.val}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{s.label}</span>
+                    </div>
+                  ))}
+                  {(report.narrative.accessibility_audit.images_missing_alt || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+                      <span className="text-[13px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--status-warn)" }}>{report.narrative.accessibility_audit.images_missing_alt}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>images missing alt</span>
+                    </div>
+                  )}
+                </div>
+                {report.narrative.accessibility_audit.details && report.narrative.accessibility_audit.details.length > 0 && (
+                  <div className="space-y-1.5">
+                    {report.narrative.accessibility_audit.details.map((d, i) => (
+                      <div key={i} className="flex items-start gap-2 text-[11px]">
+                        <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: "var(--cat-accessibility)" }} />
+                        <span style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{d}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Chaos / Security Test Summary ── */}
+            {report.narrative?.chaos_test_summary && (report.narrative.chaos_test_summary.inputs_tested || 0) > 0 && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-5">
+                  <Shield size={14} style={{ color: "var(--cat-security)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Security / Chaos Testing</span>
+                </div>
+                <div className="flex flex-wrap gap-3 mb-4">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+                    <span className="text-[13px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{report.narrative.chaos_test_summary.inputs_tested}</span>
+                    <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>inputs tested</span>
+                  </div>
+                  {(report.narrative.chaos_test_summary.inputs_accepted_incorrectly || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}>
+                      <span className="text-[13px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>{report.narrative.chaos_test_summary.inputs_accepted_incorrectly}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--status-fail)", opacity: 0.7 }}>accepted bad input</span>
+                    </div>
+                  )}
+                  {(report.narrative.chaos_test_summary.server_errors || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}>
+                      <span className="text-[13px] font-bold tabular-nums" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>{report.narrative.chaos_test_summary.server_errors}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--status-fail)", opacity: 0.7 }}>server errors</span>
+                    </div>
+                  )}
+                </div>
+                {report.narrative.chaos_test_summary.worst_finding && (
+                  <p className="text-[12px] leading-relaxed pl-4" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)", borderLeft: "2px solid var(--cat-security)" }}>
+                    {report.narrative.chaos_test_summary.worst_finding}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Recommendations ── */}
+            {report.narrative?.recommendations && report.narrative.recommendations.length > 0 && (
+              <div className="mb-14">
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Recommendations</div>
+                <div className="space-y-3">
+                  {report.narrative.recommendations.map((rec, i) => {
+                    const isObj = typeof rec === "object";
+                    return (
+                      <div key={i} className="flex gap-3 p-3 rounded-lg" style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}>
+                        <span className="text-[14px] font-bold tabular-nums shrink-0 mt-0.5" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>{i + 1}</span>
+                        <div className="flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                              {isObj ? rec.action : rec}
+                            </span>
+                            {isObj && (rec as { complexity?: string }).complexity && (
+                              <span className="text-[8px] px-1.5 py-0.5 rounded shrink-0" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.04)", color: "var(--text-muted)" }}>
+                                {(rec as { complexity?: string }).complexity}
+                              </span>
+                            )}
+                          </div>
+                          {isObj && rec.impact && (
+                            <div className="text-[11px] mt-1 leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{rec.impact}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1199,23 +1645,39 @@ export default function TestPage() {
               </div>
             )}
 
-            {/* ── Actions ── */}
-            <div className="flex items-center justify-center gap-3 pt-4">
-              <a
-                href="/"
-                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline"
-                style={{ fontFamily: "var(--font-display)", color: "var(--accent)", border: "1px solid rgba(232,164,74,0.2)" }}
-              >
-                Test another site
-              </a>
+            {/* ── Bottom Action Bar ── */}
+            <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+            <div className="flex items-center gap-3 flex-wrap">
+              {report.fix_prompt && (
+                <button
+                  onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
+                    color: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
+                    border: `1px solid ${copiedPrompt ? "rgba(74,222,128,0.2)" : "rgba(232,164,74,0.15)"}`,
+                  }}
+                >
+                  <Sparkles size={11} />
+                  {copiedPrompt ? "Copied to clipboard" : "Copy AI fix prompt"}
+                </button>
+              )}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
                 style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
               >
-                <Copy size={10} />
+                <Copy size={11} />
                 {copied ? "Copied" : "Share"}
               </button>
+              <a
+                href="/"
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
+              >
+                Test another site
+              </a>
             </div>
 
           </motion.div>

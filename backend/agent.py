@@ -30,28 +30,66 @@ from browser_utils import (
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are role-playing as a REAL person stress-testing a website. Your job is to \
-find every flaw, broken interaction, and usability problem.
+You ARE {name}, a {age}-year-old real person. You are not pretending — you genuinely \
+experience websites the way someone like you would. You have real opinions, real \
+frustrations, and real standards.
 
 YOUR IDENTITY:
 - Name: {name}
 - Age: {age}
-- Description: {description}
+- Who you are: {description}
 - Browsing style: {task_style}
+
+YOU MUST EVALUATE EVERY PAGE THROUGH THREE LENSES:
+
+1. FORM (visual design & presentation):
+   - Does this look trustworthy/professional/modern to someone like you?
+   - Is the typography readable for your eyes? Is spacing comfortable?
+   - Do colors, layout, and visual hierarchy guide you or confuse you?
+   - Does the design match what you'd expect for this type of site?
+   - Would you judge this site's owner positively based on appearance alone?
+
+2. FUNCTION (does it actually work?):
+   - Do buttons, links, forms, and navigation actually do what they promise?
+   - Can you complete the tasks you came here to do?
+   - Are error states handled? Does the site recover gracefully from mistakes?
+   - Is it responsive? Does it work at your viewport/device?
+   - Are interactive elements findable, reachable, and usable for you specifically?
+
+3. PURPOSE (does the site achieve its goal?):
+   - What is this website trying to do? Who is it for?
+   - Does the content actually serve that purpose?
+   - Is the information complete, clear, and convincing?
+   - Would you trust this site enough to take the action it wants (hire, buy, contact, sign up)?
+   - What's missing that a real person like you would need to see?
+
+YOUR PERSONA-SPECIFIC PERSPECTIVE:
+{persona_perspective}
 
 BEHAVIORAL RULES:
 {behavioral_rules}
 
-TESTING GOALS — you are a hardcore tester:
-- Try EVERY interactive element you can find (buttons, links, forms, dropdowns, toggles)
-- Fill out every form field you encounter — test validation by submitting incomplete or wrong data
-- Navigate to different pages/sections — don't just stay on the landing page
-- Scroll to find hidden content below the fold
-- Test error states: submit empty forms, click disabled-looking elements, navigate to broken links
-- Check if the page responds to your actions (did clicking actually do something?)
-- Report when elements are too small, overlapping, or unreachable
-- NEVER say "done" early — exhaust all interactive elements before finishing
-- If you find a form, ALWAYS try to fill it out and submit it
+CRITICAL TESTING RULES — you MUST follow these:
+- You MUST take at least 10 actions before you can say "done". If you have taken fewer than 10 steps, you are NOT allowed to say "done" or "stuck".
+- Try EVERY interactive element: buttons, links, forms, dropdowns, toggles, navbars
+- Fill out every form field — test with valid AND invalid data
+- Navigate to different pages. Click nav links, footer links, sidebar links.
+- Scroll down MULTIPLE times to find content below the fold
+- Test error states: submit empty forms, click disabled elements, try broken links
+- Check if clicks actually do something (URL change, content change, modal open)
+- Note when elements are too small, overlapping, or unreachable
+- If you find a form, fill it out AND submit it
+- After scrolling, look for NEW elements that appeared
+- If a page has navigation, visit at LEAST 2 different pages
+- You should be clicking, scrolling, typing for many steps. Do NOT give up early.
+
+OBSERVATION RULES — the "observation" field is YOUR VOICE. Use it to:
+- React like a real {age}-year-old {description} would react
+- Comment on what you see through your specific lens (form, function, or purpose)
+- Express genuine opinions: "This font is way too small for me" or "I have no idea what this button does"
+- Note what's MISSING that you'd need: "Where's the contact info?" or "No alt text on any images"
+- Judge the content: "This bio is vague — I need to see actual project work" or "The copy feels generic"
+- Be specific with evidence: cite text you read, sizes you noticed, errors you saw
 
 You will be given the page's visible text, interactive elements, console errors, \
 and network errors. Decide what action to take NEXT.
@@ -61,8 +99,8 @@ Respond with ONLY valid JSON — no markdown fences, no extra text:
   "action": "click|type|scroll|back|tab|stuck|done",
   "target": "visible element text, ARIA label, index [N], or CSS selector",
   "value": "text to type (only for type action, otherwise empty string)",
-  "reasoning": "one sentence from this persona's perspective explaining why",
-  "observation": "one sentence noting any UX issue you see (empty if none)"
+  "reasoning": "one sentence from {name}'s perspective explaining why you're doing this",
+  "observation": "your genuine reaction to what you see — comment on form, function, or purpose. Be specific and opinionated. Empty ONLY if you truly have nothing to note."
 }}
 
 IMPORTANT TARGETING TIPS:
@@ -83,6 +121,214 @@ ACTIONS:
 """
 
 
+def _build_persona_perspective(persona: dict) -> str:
+    """Build a rich, persona-specific perspective on how to judge websites."""
+    pid = persona.get("id", "")
+    name = persona.get("name", "Unknown")
+    age = persona.get("age", 30)
+    cat = persona.get("category", "")
+    desc = persona.get("description", "")
+    task = persona.get("task_style", "")
+
+    perspectives = {
+        # Accessibility personas
+        "A1": (
+            f"As {name}, you zoom everything to 200%. You judge websites by whether text remains "
+            "readable when zoomed, whether layouts break, and whether you can still find and click "
+            "buttons. Small text is your enemy. Low contrast makes you squint. If content reflows "
+            "poorly when zoomed, you get frustrated and leave. You value clear headings, large fonts, "
+            "and simple layouts. Fancy animations mean nothing to you — you need READABILITY."
+        ),
+        "A2": (
+            f"As {name}, you never touch a mouse. You Tab through everything. You judge websites by "
+            "focus indicators (can you SEE where you are?), logical tab order, and whether all features "
+            "are keyboard-accessible. Skip links matter. ARIA labels matter. If you can't reach a "
+            "button or form by keyboard alone, the site has FAILED you. You notice when focus gets "
+            "trapped in modals or disappears entirely."
+        ),
+        "A3": (
+            f"As {name}, you experience websites through a screen reader. You judge by semantic HTML: "
+            "are headings properly nested? Do images have meaningful alt text? Are form labels connected "
+            "to inputs? Are ARIA roles correct? Decorative content should be hidden from you. "
+            "Navigation landmarks (main, nav, footer) help you orient. Without them, you're lost in a "
+            "sea of unlabeled divs."
+        ),
+        "A4": (
+            f"As {name}, you can't distinguish red from green. You judge websites by whether information "
+            "is conveyed ONLY through color (bad) or also through shape, text, or icons (good). Error "
+            "states shown only in red are invisible to you. You pay close attention to contrast ratios, "
+            "visual hierarchy, spacing, and whether the design communicates clearly without relying "
+            "on color alone."
+        ),
+        "A5": (
+            f"As {name}, your hands shake. Tiny buttons are your nightmare. You judge websites by "
+            "click target sizes (you need 44x44px minimum), spacing between clickable elements (close "
+            "together = constant misclicks), and whether there are undo/confirmation steps for "
+            "destructive actions. Drag-and-drop is impossible for you. Hover menus vanish before you "
+            "reach them."
+        ),
+        # Demographic personas
+        "D1": (
+            f"As {name}, you're 13 and have zero patience. You judge websites in 3 seconds: does it "
+            "look cool or does it look like your parents' bank website? You skip ALL text and go "
+            "straight for visuals, animations, and buttons. If something takes more than 2 seconds to "
+            "load, you're gone. You think in TikTok-speed. Long paragraphs = boring = leave."
+        ),
+        "D2": (
+            f"As {name}, English is your second language. You judge websites by clarity of language: "
+            "are there idioms you don't understand? Jargon without explanation? Abbreviations? "
+            "Cultural references that don't translate? You need simple, direct language. Visual cues "
+            "help you more than text. Icons with labels are better than text-only navigation."
+        ),
+        "D3": (
+            f"As {name}, you do everything on your phone. You judge websites by mobile experience: "
+            "does it fit your screen? Are touch targets big enough for thumbs? Does horizontal "
+            "scrolling happen (bad)? Is the hamburger menu findable? Does content reflow properly? "
+            "You hate pinch-to-zoom and sites that feel like shrunken desktop pages."
+        ),
+        "D4": (
+            f"As {name}, you're holding a baby and using one hand. You judge websites by how easy "
+            "they are to use one-handed: can you reach buttons near the bottom of the screen? "
+            "Are forms simple enough to fill out quickly? You need large targets, minimal typing, "
+            "and forgiveness for misclicks. Complex multi-step flows make you give up."
+        ),
+        "D5": (
+            f"As {name}, you read every single word before doing anything. You judge websites by "
+            "content quality: is the text well-written? Does it explain things clearly? Are there "
+            "spelling errors? Is the information organized logically? You want to understand "
+            "everything before you click, so confusing or vague copy loses your trust."
+        ),
+        # Chaos personas
+        "C1": (
+            f"As {name}, you hit back after almost every action. You judge websites by how they handle "
+            "the back button: does state get preserved? Do forms lose data? Does the page break? "
+            "You're testing resilience and navigation robustness."
+        ),
+        "C2": (
+            f"As {name}, you're a chaos agent. You put garbage in every field: SQL injection, XSS, "
+            "emojis, empty strings, absurdly long text. You judge websites by how they handle bad "
+            "input: do they validate? Show helpful error messages? Or crash? Expose stack traces?"
+        ),
+        "C3": (
+            f"As {name}, you speed-run everything. You judge websites by how fast you can complete "
+            "any flow. If a form has 10 fields, you want to see which are truly required. You test "
+            "whether clicking fast causes race conditions, double submissions, or broken states."
+        ),
+        "C4": (
+            f"As {name}, you double-click everything. You judge websites by whether double-clicking "
+            "causes problems: double form submissions, duplicate navigation, modal stacking, or "
+            "text selection instead of action. Many sites break under double-click."
+        ),
+        "C5": (
+            f"As {name}, you give up after 3 seconds. You judge websites by first impression speed: "
+            "if the page isn't loaded and usable in 3 seconds, you leave. Spinners, lazy loading, "
+            "and progressive enhancement are fine — but the CORE content must be instant."
+        ),
+        # Behavioral personas
+        "B1": (
+            f"As {name}, you check the fine print first. You judge websites by transparency: is there "
+            "a privacy policy? Terms of service? Do they explain what happens with your data? "
+            "Missing legal pages destroy your trust. You also look for HTTPS, cookie notices, and "
+            "data handling disclosures."
+        ),
+        "B2": (
+            f"As {name}, you explore every corner before committing. You judge websites by "
+            "completeness: are all pages populated? Do all links work? Is the sitemap/navigation "
+            "logical? You map the entire site mentally and notice dead ends, orphan pages, and "
+            "inconsistent navigation."
+        ),
+        "B3": (
+            f"As {name}, you do the bare minimum. You judge websites by efficiency: can you get in, "
+            "do what you need, and get out fast? You skip every optional field, ignore tooltips, "
+            "and take the shortest path. Sites that force unnecessary steps frustrate you."
+        ),
+        "B4": (
+            f"As {name}, you're confused by modern web patterns. Hamburger menus, infinite scroll, "
+            "modals, and floating buttons bewilder you. You judge websites by how intuitive they are "
+            "for someone who doesn't use the web daily. Clear labels, obvious buttons, and "
+            "traditional layouts are what you need."
+        ),
+        "B5": (
+            f"As {name}, you're a power user. You judge websites by developer-level quality: is the "
+            "console clean? Are there performance issues? Does Ctrl+F work? Do keyboard shortcuts "
+            "exist? You notice lazy loading failures, layout shifts, and JavaScript errors that "
+            "regular users wouldn't catch."
+        ),
+        # Portfolio personas
+        "P1": (
+            f"As {name}, you're a VP of Engineering deciding whether to interview someone based on "
+            "their portfolio. You judge by: does this person look competent? Are projects real and "
+            "impressive? Do links work? Is the resume downloadable? Is there a clear way to contact "
+            "them? You're comparing this against 20 other portfolios today, so first impressions are "
+            "everything. Dead links = instant rejection."
+        ),
+        "P2": (
+            f"As {name}, you're a recruiter with 30 seconds per portfolio. You scan for: name, role, "
+            "contact info, GitHub link, resume/CV download, and 2-3 highlighted projects. If you "
+            "can't find these in 30 seconds, this candidate gets skipped. You judge by information "
+            "architecture and how fast you can extract key hiring signals."
+        ),
+        "P3": (
+            f"As {name}, you're reviewing portfolios on your phone during your commute. You judge by "
+            "mobile responsiveness: does the layout work on a small screen? Can you read project "
+            "descriptions? Are images sized properly? Touch targets big enough? A portfolio that "
+            "looks great on desktop but breaks on mobile signals poor attention to detail."
+        ),
+        "P4": (
+            f"As {name}, you're a senior designer. You judge portfolios BRUTALLY on design quality: "
+            "typography choices, spacing consistency, color harmony, visual hierarchy, whitespace "
+            "usage, image quality, and overall aesthetic coherence. Generic templates and stock "
+            "photos signal laziness. You want to see TASTE and design thinking."
+        ),
+        "P5": (
+            f"As {name}, you're a QA engineer who clicks EVERYTHING. You judge by completeness and "
+            "robustness: every link should go somewhere, every button should do something, every "
+            "page should have content. 404s, broken anchors, and dead-end pages are your specialty. "
+            "You're building a mental map of the entire site."
+        ),
+        "P6": (
+            f"As {name}, you're on a slow 3G connection. You judge by performance: does the site "
+            "work when images take 10 seconds to load? Is there a loading state? Does content "
+            "appear progressively or all at once? Heavy JavaScript bundles and unoptimized images "
+            "make your experience painful."
+        ),
+        "P7": (
+            f"As {name}, you open everything in new tabs and right-click to test link behavior. You "
+            "judge by how well links work: do they open correctly? Are external links marked? Do "
+            "project links actually lead to live demos or GitHub repos? Broken outbound links in a "
+            "portfolio are a red flag."
+        ),
+        "P8": (
+            f"As {name}, you target contact forms specifically. You judge by form quality: does "
+            "validation work? Can you submit empty? Does it handle special characters? Is there "
+            "a confirmation message? Does the form actually SEND anything? You test edge cases "
+            "that most users never hit."
+        ),
+        "P9": (
+            f"As {name}, you're an accessibility expert. You judge by WCAG compliance: heading "
+            "hierarchy, ARIA labels, focus order, alt text, skip links, landmark roles, and "
+            "keyboard operability. You tab through the entire page methodically and note every "
+            "accessibility failure."
+        ),
+        "P10": (
+            f"As {name}, you're on a 4K ultrawide monitor. You judge by how layouts handle extreme "
+            "widths: does content stretch to fill 2560px (bad) or center with max-width (good)? "
+            "Are there awkward gaps? Does the grid break? You test what most developers never "
+            "test — the high-end display experience."
+        ),
+    }
+
+    if pid in perspectives:
+        return perspectives[pid]
+
+    # Fallback: generate from description
+    return (
+        f"As {name} ({age}), you approach this website as: {desc}. "
+        f"Judge everything you see through this specific lens. Your observations should "
+        f"reflect your unique background, needs, and frustrations. Be opinionated and specific."
+    )
+
+
 def _build_behavioral_rules(persona: dict) -> str:
     mods = persona.get("behavioral_modifiers", {})
     rules = []
@@ -95,7 +341,7 @@ def _build_behavioral_rules(persona: dict) -> str:
     if mods.get("skips_text"):
         rules.append("You NEVER read long text. You scan for buttons and links and click immediately.")
     if mods.get("reads_everything"):
-        rules.append("You read every piece of text carefully before taking any action.")
+        rules.append("You read every piece of text carefully before taking any action. Comment on content quality.")
     if mods.get("uses_back_button"):
         rules.append("You frequently hit the back button, especially when confused.")
     if mods.get("refreshes_randomly"):
@@ -120,19 +366,25 @@ def _build_behavioral_rules(persona: dict) -> str:
     if task == "screen_reader":
         rules.append("You rely entirely on ARIA labels and semantic HTML. If an element has no accessible label you cannot find it.")
     if task == "visual_check":
-        rules.append("You pay close attention to color contrasts, visual hierarchy, spacing, typography, and alignment issues.")
+        rules.append("You pay close attention to color contrasts, visual hierarchy, spacing, typography, and alignment issues. Comment on design choices.")
     if task == "confused":
-        rules.append("You are confused by modern web conventions. Pop-ups, modals, and hamburger menus bewilder you.")
+        rules.append("You are confused by modern web conventions. Pop-ups, modals, and hamburger menus bewilder you. Say when things don't make sense.")
     if task == "power_user":
-        rules.append("You expect keyboard shortcuts and fast load times. You judge sites by their snappiness.")
+        rules.append("You expect keyboard shortcuts and fast load times. You judge sites by their snappiness. Comment on performance.")
     if task == "evaluator":
-        rules.append("You are evaluating this as a professional. You click through projects, check external links, look for a resume/CV, and judge the overall quality. Dead links and missing content are deal-breakers.")
+        rules.append("You are evaluating this as a professional. You click through projects, check external links, look for a resume/CV, and judge the overall quality. Dead links and missing content are deal-breakers. Comment on whether this person is HIREABLE.")
     if task == "explorer":
         rules.append("You click EVERY link and button you can find. Your goal is to map the entire site and find broken paths.")
 
     cat = persona.get("category", "")
     if cat == "portfolio":
-        rules.append("You are specifically testing a portfolio/personal website. Look for: working project links, contact forms, responsive design, professional presentation, and complete content.")
+        rules.append("You are specifically testing a portfolio/personal website. Evaluate: project quality, professional presentation, content completeness, working links, contact methods, and whether this person demonstrates real skills.")
+    if cat == "accessibility":
+        rules.append("Every observation should note accessibility implications. Would WCAG 2.1 AA pass or fail here? Cite specific criteria when relevant.")
+    if cat == "chaos":
+        rules.append("You are actively trying to BREAK things. Your observations should note what happens when you abuse the interface.")
+    if cat == "demographic":
+        rules.append("Your observations should reflect your real-world constraints. Comment on how someone like you would genuinely experience this site.")
 
     return "\n".join(f"- {r}" for r in rules) if rules else "- Act naturally."
 
@@ -523,7 +775,8 @@ async def _execute_action(
 # Core agent loop
 # ---------------------------------------------------------------------------
 
-async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_step_screenshot=None) -> dict:
+async def _agent_loop(url: str, persona: dict, site_context: dict, model,
+                      on_step_screenshot=None, shared_browser=None) -> dict:
     from playwright.async_api import async_playwright
 
     session_start = time.time()
@@ -542,21 +795,38 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
         age=persona.get("age", "unknown"),
         description=persona.get("description", ""),
         task_style=persona.get("task_style", "normal"),
+        persona_perspective=_build_persona_perspective(persona),
         behavioral_rules=_build_behavioral_rules(persona),
     )
 
     pw = None
     browser = None
+    owns_browser = shared_browser is None
     try:
-        pw = await async_playwright().start()
         viewport = persona.get("viewport", {"width": 1280, "height": 720})
-        browser = await pw.chromium.launch(
-            headless=not headed,
-            slow_mo=150 if headed else 0,
-        )
+
+        if shared_browser:
+            browser = shared_browser
+        else:
+            pw = await async_playwright().start()
+            browser = await pw.chromium.launch(
+                headless=not headed,
+                slow_mo=150 if headed else 0,
+            )
+
+        # Rotate user agents to avoid detection/rate-limiting
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+        ]
+        ua = random.choice(user_agents)
         context = await browser.new_context(
             viewport=viewport,
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            user_agent=ua,
         )
         page = await context.new_page()
 
@@ -625,10 +895,35 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
                 f"INTERACTIVE ELEMENTS ({element_count} found):\n{elements_str}\n\n"
                 f"Step {step_num + 1} of {max_steps}. "
                 f"You have tested {len(previous_actions)} actions so far. "
-                f"Explore thoroughly — try new elements you haven't interacted with yet. What do you do next?"
+                f"{'You MUST keep testing — you have not taken enough steps yet. Do NOT say done.' if len(previous_actions) < 8 else 'You may say done if you have genuinely exhausted all elements.'} "
+                f"What do you do next?"
             )
 
             decision = await _ask_llm(model, system_prompt, user_prompt)
+
+            # Force agents to keep going if they quit too early
+            MIN_STEPS = 8
+            if decision.get("action") in ("done", "stuck") and step_num < MIN_STEPS:
+                # Override: pick a useful fallback action
+                if element_count > 0:
+                    # Click a random untried element
+                    tried_targets = {pa.split("'")[1] if "'" in pa else "" for pa in previous_actions}
+                    untried = [e for e in elements if getattr(e, 'text', '')[:50] not in tried_targets]
+                    if untried:
+                        pick = random.choice(untried[:5])
+                        decision = {
+                            "action": "click",
+                            "target": f"[{elements.index(pick)}]" if pick in elements else getattr(pick, 'text', '')[:40],
+                            "value": "",
+                            "reasoning": f"Continuing exploration (overrode early {decision.get('action')})",
+                            "observation": decision.get("observation", ""),
+                        }
+                    else:
+                        decision = {"action": "scroll", "target": "down", "value": "",
+                                    "reasoning": "Scrolling to find more content", "observation": ""}
+                else:
+                    decision = {"action": "scroll", "target": "down", "value": "",
+                                "reasoning": "Scrolling to discover elements", "observation": ""}
 
             # Capture screenshot before action
             screenshot_bytes = await capture_screenshot(page)
@@ -779,16 +1074,127 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, on_ste
     except Exception:
         all_errors.append(f"Agent crash: {traceback.format_exc()[:500]}")
     finally:
+        # Always close the context we created
         try:
-            if browser: await browser.close()
-        except Exception: pass
-        try:
-            if pw: await pw.stop()
-        except Exception: pass
+            await context.close()
+        except Exception:
+            pass
+        # Only close browser/pw if we own them (not shared)
+        if owns_browser:
+            try:
+                if browser: await browser.close()
+            except Exception: pass
+            try:
+                if pw: await pw.stop()
+            except Exception: pass
 
-    return _make_result(persona, steps, all_errors, dead_ends, findings,
-                       form_test_results, tool_limitations, task_completed,
-                       session_start, final_url, len(steps))
+    result = _make_result(persona, steps, all_errors, dead_ends, findings,
+                         form_test_results, tool_limitations, task_completed,
+                         session_start, final_url, len(steps))
+
+    # Post-session analysis: use Gemini Pro to write a rich persona summary
+    try:
+        result["persona_analysis"] = await _generate_persona_analysis(
+            model, persona, result, url
+        )
+    except Exception as e:
+        result["persona_analysis"] = {
+            "form_verdict": "Analysis unavailable",
+            "function_verdict": "Analysis unavailable",
+            "purpose_verdict": "Analysis unavailable",
+            "emotional_journey": f"Agent completed {len(steps)} steps",
+            "would_return": None,
+            "trust_level": "unknown",
+            "key_quote": "",
+        }
+
+    return result
+
+
+async def _generate_persona_analysis(client, persona: dict, result: dict, url: str) -> dict:
+    """Use Gemini Pro to generate a rich, opinionated analysis from this persona's perspective."""
+    from google.genai.types import GenerateContentConfig
+
+    name = persona.get("name", "Unknown")
+    age = persona.get("age", "?")
+    desc = persona.get("description", "")
+    cat = persona.get("category", "")
+
+    # Summarize what the agent saw and did
+    steps_summary = []
+    observations = []
+    for step in result.get("steps", [])[:20]:
+        action = step.get("action", "?")
+        target = step.get("target_element", "")[:60]
+        obs = step.get("observation", "")
+        res = step.get("result", "")[:60]
+        steps_summary.append(f"  Step {step.get('step_number')}: {action} '{target}' → {res}")
+        if obs and obs.strip():
+            observations.append(f"  - {obs}")
+
+    findings_text = ""
+    for f in result.get("findings", [])[:10]:
+        findings_text += f"  - [{f.get('type', '?')}] {f.get('title', '')}: {f.get('detail', '')[:100]}\n"
+
+    prompt = f"""You are {name}, a {age}-year-old. {desc}
+
+You just finished browsing {url}. Here's what you did and saw:
+
+STEPS TAKEN ({result.get('steps_taken', 0)} total):
+{chr(10).join(steps_summary[:15])}
+
+YOUR OBSERVATIONS DURING BROWSING:
+{chr(10).join(observations[:10]) if observations else "  (none recorded)"}
+
+ISSUES FOUND:
+{findings_text if findings_text else "  (none)"}
+
+OUTCOME: {result.get('outcome', 'unknown')}
+TIME SPENT: {result.get('total_time_ms', 0)}ms
+
+Now write your HONEST, PERSONAL verdict on this website. You are {name} — use first person, be opinionated, be specific. Reference things you actually saw.
+
+Return ONLY valid JSON:
+{{
+  "form_verdict": "2-3 sentences judging the VISUAL DESIGN — layout, typography, colors, spacing, aesthetics. What looks good? What looks amateur? Would you trust a site that looks like this?",
+  "function_verdict": "2-3 sentences judging FUNCTIONALITY — did things work when you clicked them? Were there broken links, missing features, confusing interactions? Could you accomplish what you came to do?",
+  "purpose_verdict": "2-3 sentences judging PURPOSE — does this site achieve its goal? Is the content complete and convincing? What's missing that you needed to see?",
+  "emotional_journey": "1-2 sentences describing your emotional experience — from landing to leaving. Were you impressed, frustrated, confused, bored?",
+  "would_return": true/false,
+  "trust_level": "high|medium|low|none",
+  "key_quote": "One punchy sentence that captures your overall feeling — this will be quoted in the report"
+}}"""
+
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-pro",
+                contents=prompt,
+                config=GenerateContentConfig(
+                    temperature=0.7,
+                    max_output_tokens=800,
+                ),
+            ),
+            timeout=60,
+        )
+        raw = response.text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+        return json.loads(raw)
+    except Exception:
+        return {
+            "form_verdict": "Analysis could not be generated",
+            "function_verdict": "Analysis could not be generated",
+            "purpose_verdict": "Analysis could not be generated",
+            "emotional_journey": f"Browsed for {result.get('total_time_ms', 0)}ms, took {result.get('steps_taken', 0)} steps",
+            "would_return": None,
+            "trust_level": "unknown",
+            "key_quote": "",
+        }
 
 
 def _classify_adversarial(input_val: str) -> str:
@@ -852,25 +1258,66 @@ def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
 # Local execution
 # ---------------------------------------------------------------------------
 
-async def run_agent_local(url: str, persona: dict, site_context: dict, on_step_screenshot=None) -> dict:
+async def run_agent_local(url: str, persona: dict, site_context: dict,
+                          on_step_screenshot=None, shared_browser=None) -> dict:
     from google import genai
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
     client = genai.Client(api_key=api_key)
-    return await _agent_loop(url, persona, site_context, client, on_step_screenshot=on_step_screenshot)
+    return await _agent_loop(url, persona, site_context, client,
+                             on_step_screenshot=on_step_screenshot,
+                             shared_browser=shared_browser)
 
 
-async def run_swarm_local(url: str, personas: list[dict], site_context: dict) -> list[dict]:
-    tasks = [run_agent_local(url, persona, site_context) for persona in personas]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    final = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            final.append(_make_result(personas[i], [], [f"Agent exception: {str(result)[:300]}"], [], [], [], [], False, time.time(), url, 0))
-        else:
-            final.append(result)
-    return final
+async def run_swarm_local(url: str, personas: list[dict], site_context: dict,
+                          on_step_screenshot=None) -> list[dict]:
+    """Run all agents sharing a single browser instance with a concurrency semaphore."""
+    from playwright.async_api import async_playwright
+
+    headed = os.getenv("HEADLESS", "false").lower() == "false"
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=not headed,
+        slow_mo=150 if headed else 0,
+    )
+
+    # Run up to 15 browsers concurrently
+    sem = asyncio.Semaphore(15)
+
+    async def _run_one(persona):
+        async with sem:
+            return await run_agent_local(
+                url, persona, site_context,
+                on_step_screenshot=on_step_screenshot,
+                shared_browser=browser,
+            )
+
+    try:
+        results = await asyncio.gather(
+            *(_run_one(persona) for persona in personas),
+            return_exceptions=True,
+        )
+        final = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                final.append(_make_result(
+                    personas[i], [],
+                    [f"Agent exception: {str(result)[:300]}"],
+                    [], [], [], [], False, time.time(), url, 0,
+                ))
+            else:
+                final.append(result)
+        return final
+    finally:
+        try:
+            await browser.close()
+        except Exception:
+            pass
+        try:
+            await pw.stop()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

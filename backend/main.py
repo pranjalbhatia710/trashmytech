@@ -9,12 +9,14 @@ import time
 import traceback
 import uuid
 from collections import defaultdict
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, Optional
+from uuid import UUID
 
 import logging
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -28,6 +30,17 @@ from report import generate_report, generate_fix_prompt
 from agent import run_agent_local
 from annotator import annotate_screenshot
 from gemini_tools import GeminiTools
+from external_apis import run_all_external_apis
+from scoring import calculate_scores
+from quick_wins import generate_quick_wins
+
+# Database and cache imports
+from db.connection import init_pool, close_pool, run_migrations, is_available as db_available
+from db.connection import health_check as db_health_check
+from db import queries as db_queries
+from cache.redis_client import init_redis, close_redis, is_available as cache_available
+from cache.redis_client import CacheManager, health_check as cache_health_check
+from services.persistence import persist_analysis, normalize_domain
 
 load_dotenv()
 
@@ -38,9 +51,30 @@ AGENT_COUNT = int(os.getenv("AGENT_COUNT", "20"))  # Default 20
 USE_MODAL = os.getenv("USE_MODAL", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
+# App lifecycle
+# ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup/shutdown: initialise and tear down DB pool + Redis."""
+    log.info("Initialising database and cache connections...")
+    await init_pool()
+    if db_available():
+        try:
+            await run_migrations()
+            log.info("Database migrations applied successfully")
+        except Exception:
+            log.exception("Database migration failed -- persistence may not work")
+    await init_redis()
+    yield
+    await close_pool()
+    await close_redis()
+    log.info("Database and cache connections closed")
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="trashmy.tech", version="2.0.0")
+app = FastAPI(title="trashmy.tech", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,12 +134,175 @@ def _prune_idempotency(now: float) -> None:
         del idempotency_cache[url]
 
 
+def _build_scoring_external(ext: dict | None) -> dict:
+    """Translate the raw external_api_data dict into the flat key structure
+    that scoring.py expects.
+
+    scoring.py expects keys like:
+      pagespeed: {performance, accessibility, seo, best_practices}
+      core_web_vitals: {lcp_seconds, fcp_seconds, cls, inp_ms}
+      observatory: {grade, tests}
+      safe_browsing: "clean" | "flagged"
+      ssl: {valid, days_remaining}
+      dns_auth: {spf_present, spf_strict, dmarc_present, dmarc_enforce}
+      domain_age_years: float
+      green_hosting: bool
+      readability: {flesch}
+      grammar_errors: int
+      value_proposition_score: float
+    """
+    if not ext:
+        return {}
+
+    out: dict = {}
+
+    # -- PageSpeed / Lighthouse scores --------------------------------------
+    ps = ext.get("pagespeed", {})
+    if ps:
+        # Prefer mobile, fall back to desktop
+        strategy = ps.get("mobile") or ps.get("desktop") or {}
+        scores = strategy.get("scores", {})
+        if scores:
+            out["pagespeed"] = {
+                "performance": scores.get("performance"),
+                "accessibility": scores.get("accessibility"),
+                "seo": scores.get("seo"),
+                "best_practices": scores.get("best_practices") or scores.get("best-practices"),
+            }
+        wv = strategy.get("web_vitals", {})
+        if wv:
+            lcp_ms = wv.get("largest_contentful_paint_ms")
+            fcp_ms = wv.get("first_contentful_paint_ms")
+            out["core_web_vitals"] = {
+                "lcp_seconds": lcp_ms / 1000 if lcp_ms is not None else wv.get("lcp_seconds"),
+                "fcp_seconds": fcp_ms / 1000 if fcp_ms is not None else wv.get("fcp_seconds"),
+                "cls": wv.get("cumulative_layout_shift") if wv.get("cumulative_layout_shift") is not None else wv.get("cls"),
+                "inp_ms": wv.get("interaction_to_next_paint_ms") if wv.get("interaction_to_next_paint_ms") is not None else wv.get("inp_ms"),
+            }
+
+    # -- Observatory --------------------------------------------------------
+    obs = ext.get("observatory", {})
+    if obs:
+        out["observatory"] = {
+            "grade": obs.get("grade"),
+            "tests": obs.get("tests", {}),
+        }
+
+    # -- Safe Browsing ------------------------------------------------------
+    sb = ext.get("safe_browsing", {})
+    if sb:
+        if sb.get("safe") is True or sb.get("safe") == "clean":
+            out["safe_browsing"] = "clean"
+        elif sb.get("safe") is False:
+            out["safe_browsing"] = "flagged"
+        else:
+            out["safe_browsing"] = sb.get("safe")
+
+    # -- SSL ----------------------------------------------------------------
+    ssl_data = ext.get("ssl", {})
+    if ssl_data:
+        out["ssl"] = {
+            "valid": ssl_data.get("valid", False),
+            "days_remaining": ssl_data.get("days_until_expiry") or ssl_data.get("days_remaining"),
+        }
+
+    # -- DNS ----------------------------------------------------------------
+    dns = ext.get("dns", {})
+    if dns:
+        out["dns_auth"] = {
+            "spf_present": dns.get("has_spf", False),
+            "spf_strict": dns.get("spf_strict", False),
+            "dmarc_present": dns.get("has_dmarc", False),
+            "dmarc_enforce": dns.get("dmarc_enforce", False),
+        }
+
+    # -- Domain age ---------------------------------------------------------
+    whois = ext.get("whois", {})
+    if whois and whois.get("domain_age_days"):
+        out["domain_age_years"] = whois["domain_age_days"] / 365.25
+
+    # -- Green hosting ------------------------------------------------------
+    green = ext.get("green_web", {})
+    if green:
+        out["green_hosting"] = bool(green.get("green"))
+
+    # -- Readability (if provided) ------------------------------------------
+    read = ext.get("readability", {})
+    if read:
+        out["readability"] = {"flesch": read.get("flesch")}
+
+    # -- Grammar errors (if provided) ---------------------------------------
+    grammar = ext.get("grammar_errors")
+    if grammar is not None:
+        out["grammar_errors"] = grammar
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 @app.get("/v1/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0", "agent_count": AGENT_COUNT, "use_modal": USE_MODAL}
+    result = {
+        "status": "ok",
+        "version": "2.0.0",
+        "agent_count": AGENT_COUNT,
+        "use_modal": USE_MODAL,
+        "database": "available" if db_available() else "unavailable",
+        "cache": "available" if cache_available() else "unavailable",
+    }
+    return result
+
+
+@app.get("/v1/keyword")
+async def extract_keyword(url: str):
+    """Use Gemini Flash to extract the main brand/keyword from a URL."""
+    from urllib.parse import urlparse
+
+    # Fast fallback: extract from domain name
+    try:
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        domain = (parsed.netloc or parsed.path).split(":")[0]
+        fallback = domain.replace("www.", "").split(".")[0].upper()
+    except Exception:
+        fallback = "SITE"
+
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return {"keyword": fallback}
+
+        client = genai.Client(api_key=api_key)
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=(
+                f"What is the brand name from this URL? Return ONLY the single brand/company name word, "
+                f"nothing else. Max 10 characters. URL: {url}"
+            ),
+            config=GenerateContentConfig(max_output_tokens=20),
+        )
+        keyword = response.text.strip().strip('"\'.,!?:').upper()
+        # Sanity check — if Gemini returned garbage, use fallback
+        if not keyword or len(keyword) > 14 or " " in keyword:
+            keyword = fallback
+        return {"keyword": keyword}
+    except Exception:
+        return {"keyword": fallback}
+
+
+@app.get("/v1/health/deep")
+async def health_deep():
+    """Deep health check that verifies DB and Redis connectivity."""
+    db_status = await db_health_check()
+    cache_status = await cache_health_check()
+    overall = "ok" if db_status.get("status") == "ok" and cache_status.get("status") == "ok" else "degraded"
+    return {
+        "status": overall,
+        "database": db_status,
+        "cache": cache_status,
+    }
 
 
 # Live event log for diagnostics page
@@ -194,7 +391,7 @@ poll(); setInterval(poll, 2000);
 
 
 @app.post("/v1/tests")
-async def create_test(request: Request):
+async def create_test(request: Request, force_refresh: bool = Query(False)):
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
     _prune_rate_limit(client_ip, now)
@@ -207,11 +404,59 @@ async def create_test(request: Request):
         return _error_response("invalid_body", "Request body must be valid JSON.", 400)
 
     url = body.get("url")
+    force_refresh = body.get("force_refresh", force_refresh)
     if not url or not isinstance(url, str):
         return _error_response("invalid_url", "Field 'url' is required.", 400)
     if not url.startswith("http://") and not url.startswith("https://"):
         return _error_response("invalid_url", "URL must start with http:// or https://.", 400)
 
+    # ── Cache-first check (skip if force_refresh) ──────────────
+    if not force_refresh:
+        domain = normalize_domain(url)
+
+        # 1. Check Redis for cached analysis
+        cached_analysis_id = await CacheManager.get_cached_analysis(domain)
+        if cached_analysis_id:
+            cached_report = await CacheManager.get_cached_report(cached_analysis_id)
+            if cached_report:
+                _log_event("info", f"cache HIT for {domain} -> analysis {cached_analysis_id[:8]}")
+                return {
+                    "test_id": cached_analysis_id,
+                    "status": "complete",
+                    "cached": True,
+                    "analysis_id": cached_analysis_id,
+                    "report": cached_report,
+                }
+
+        # 2. Check PostgreSQL for recent analysis
+        try:
+            db_analysis = await db_queries.get_latest_analysis_for_domain(domain, max_age_days=7)
+            if db_analysis and db_analysis.get("report_json"):
+                analysis_id_str = str(db_analysis["id"])
+                _log_event("info", f"database HIT for {domain} -> analysis {analysis_id_str[:8]}")
+
+                # Re-populate Redis cache
+                await CacheManager.cache_analysis(domain, analysis_id_str)
+                report_response = {
+                    "id": analysis_id_str,
+                    "domain": db_analysis.get("domain", domain),
+                    "created_at": str(db_analysis["created_at"]),
+                    "overall_score": db_analysis.get("overall_score"),
+                    "report": db_analysis["report_json"],
+                }
+                await CacheManager.cache_report(analysis_id_str, report_response)
+
+                return {
+                    "test_id": analysis_id_str,
+                    "status": "complete",
+                    "cached": True,
+                    "analysis_id": analysis_id_str,
+                    "report": report_response,
+                }
+        except Exception:
+            log.exception("Database cache check failed for %s", domain)
+
+    # ── No cache hit: create a new test ────────────────────────
     _prune_idempotency(now)
     if url in idempotency_cache:
         cached_id, _ = idempotency_cache[url]
@@ -276,6 +521,130 @@ async def get_annotated_screenshot(test_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Persistent data endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/report/{analysis_id}")
+async def get_stored_report(analysis_id: str):
+    """Fetch a stored analysis report by its UUID.
+
+    Checks Redis first, then falls back to PostgreSQL.
+    """
+    try:
+        uid = UUID(analysis_id)
+    except ValueError:
+        return _error_response("invalid_id", "Invalid analysis ID format.", 400)
+
+    # 1. Check Redis cache
+    cached = await CacheManager.get_cached_report(analysis_id)
+    if cached:
+        return cached
+
+    # 2. Fall back to PostgreSQL
+    row = await db_queries.get_analysis_by_id(uid)
+    if not row:
+        return _error_response("not_found", f"Analysis '{analysis_id}' not found.", 404)
+
+    report_json = row.get("report_json")
+    response = {
+        "id": str(row["id"]),
+        "domain": row.get("domain", ""),
+        "created_at": str(row["created_at"]),
+        "overall_score": row.get("overall_score"),
+        "accessibility_score": row.get("accessibility_score"),
+        "seo_score": row.get("seo_score"),
+        "performance_score": row.get("performance_score"),
+        "security_score": row.get("security_score"),
+        "content_score": row.get("content_score"),
+        "ux_score": row.get("ux_score"),
+        "total_issues": row.get("total_issues", 0),
+        "critical_issues": row.get("critical_issues", 0),
+        "execution_time_seconds": row.get("execution_time_seconds"),
+        "report": report_json,
+    }
+
+    # Re-populate Redis cache for next time
+    if report_json:
+        await CacheManager.cache_report(analysis_id, response)
+
+    return response
+
+
+@app.get("/v1/site/{domain}")
+async def get_site(domain: str, page: int = Query(1, ge=1), limit: int = Query(10, ge=1, le=100)):
+    """Fetch a site's complete analysis history with pagination."""
+    site = await db_queries.get_site_by_domain(domain)
+    if not site:
+        return _error_response("not_found", f"Domain '{domain}' has never been analyzed.", 404)
+
+    analyses, total = await db_queries.get_analyses_for_site(site["id"], page=page, limit=limit)
+
+    return {
+        "site": {
+            "id": str(site["id"]),
+            "url": site["url"],
+            "domain": site["domain"],
+            "category": site.get("category"),
+            "first_analyzed": str(site["first_analyzed"]),
+            "last_analyzed": str(site["last_analyzed"]),
+            "analysis_count": site["analysis_count"],
+            "latest_overall_score": site.get("latest_overall_score"),
+            "latest_accessibility_score": site.get("latest_accessibility_score"),
+            "latest_seo_score": site.get("latest_seo_score"),
+            "latest_performance_score": site.get("latest_performance_score"),
+            "latest_security_score": site.get("latest_security_score"),
+            "latest_content_score": site.get("latest_content_score"),
+            "latest_ux_score": site.get("latest_ux_score"),
+        },
+        "analyses": [
+            {
+                "id": str(a["id"]),
+                "created_at": str(a["created_at"]),
+                "overall_score": a.get("overall_score"),
+                "total_issues": a.get("total_issues", 0),
+                "critical_issues": a.get("critical_issues", 0),
+                "execution_time_seconds": a.get("execution_time_seconds"),
+            }
+            for a in analyses
+        ],
+        "total_analyses": total,
+        "page": page,
+        "limit": limit,
+    }
+
+
+@app.get("/v1/recent")
+async def get_recent_sites(limit: int = Query(20, ge=1, le=100)):
+    """Fetch recently analyzed sites for the landing page."""
+    sites = await db_queries.get_recent_sites(limit=limit)
+    return {
+        "sites": [
+            {
+                "domain": s["domain"],
+                "url": s["url"],
+                "latest_overall_score": s.get("latest_overall_score"),
+                "last_analyzed": str(s["last_analyzed"]),
+                "analysis_count": s.get("analysis_count", 1),
+                "category": s.get("category"),
+            }
+            for s in sites
+        ],
+    }
+
+
+@app.get("/v1/stats")
+async def get_stats():
+    """Return aggregate statistics across all analyzed sites."""
+    stats = await db_queries.get_stats()
+    return {
+        "total_sites": stats.get("total_sites", 0),
+        "total_analyses": stats.get("total_analyses", 0),
+        "total_issues": stats.get("total_issues", 0),
+        "avg_score": float(stats["avg_score"]) if stats.get("avg_score") is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Preview — quick Gemini Flash analysis
 # ---------------------------------------------------------------------------
 @app.post("/v1/preview")
@@ -332,25 +701,43 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         return
 
     # Prevent duplicate pipeline runs (React strict mode double-mounts)
+    # Give a brief grace period — React strict mode unmounts the first WS quickly,
+    # then the second one arrives. We want to let the second one through.
     if test_id in _active_pipelines:
-        # Pipeline already running — just close this duplicate connection silently
-        _log_event("info", f"[{test_id[:8]}] duplicate WS connection rejected (pipeline already running)")
-        await websocket.close()
-        return
+        _log_event("info", f"[{test_id[:8]}] duplicate WS connection — waiting briefly to see if first closes...")
+        import asyncio as _aio
+        await _aio.sleep(0.5)
+        if test_id in _active_pipelines:
+            _log_event("info", f"[{test_id[:8]}] pipeline still active, rejecting duplicate")
+            await websocket.close()
+            return
     _active_pipelines.add(test_id)
 
     url = test["url"]
+    _ws_closed = False
+
+    async def _safe_send(data: dict):
+        """Send JSON to WebSocket, silently ignoring if already closed."""
+        nonlocal _ws_closed
+        if _ws_closed:
+            return
+        try:
+            await websocket.send_json(data)
+        except RuntimeError:
+            _ws_closed = True
+        except Exception:
+            _ws_closed = True
 
     try:
         # ── Phase 1: Crawling ─────────────────────────────────
         test["status"] = "crawling"
         _log_event("info", f"[{test_id[:8]}] crawl started for {url}")
-        await websocket.send_json({"phase": "crawling", "status": "started"})
+        await _safe_send({"phase": "crawling", "status": "started"})
 
         async def _crawl_screenshot_cb(b64: str):
             try:
                 _log_event("info", f"[{test_id[:8]}] crawl screenshot captured")
-                await websocket.send_json({
+                await _safe_send({
                     "phase": "crawling",
                     "type": "screenshot",
                     "screenshot_b64": b64,
@@ -377,7 +764,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         crawl_screenshot_b64 = crawl_data.get("screenshot_base64")
         if crawl_screenshot_b64:
             try:
-                await websocket.send_json({
+                await _safe_send({
                     "phase": "crawling",
                     "type": "screenshot",
                     "screenshot_b64": crawl_screenshot_b64,
@@ -385,7 +772,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             except Exception:
                 pass
 
-        await websocket.send_json({
+        await _safe_send({
             "phase": "crawling", "status": "complete",
             "data": {
                 "page_title": page_title,
@@ -398,13 +785,17 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             },
         })
 
+        # ── External APIs (run in parallel with swarming) ────
+        _log_event("info", f"[{test_id[:8]}] launching external API checks in background")
+        external_api_task = asyncio.create_task(run_all_external_apis(url))
+
         # ── Phase 2: Swarming ─────────────────────────────────
         personas = sample_personas(AGENT_COUNT)
         agent_count = len(personas)
         test["status"] = "swarming"
         _log_event("info", f"[{test_id[:8]}] swarming started — {agent_count} agents, USE_MODAL={USE_MODAL}")
 
-        await websocket.send_json({
+        await _safe_send({
             "phase": "swarming", "status": "started", "agent_count": agent_count,
             "personas": [
                 {
@@ -420,7 +811,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
         # Notify client about each agent with a brief delay for visual stagger
         for persona in personas:
-            await websocket.send_json({
+            await _safe_send({
                 "phase": "swarming",
                 "agent_id": persona["id"],
                 "persona_name": persona["name"],
@@ -430,7 +821,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                 "status": "running",
             })
             # Also send a log event so frontend log is descriptive
-            await websocket.send_json({
+            await _safe_send({
                 "phase": "swarming",
                 "type": "log",
                 "level": "info",
@@ -460,7 +851,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     break
                 aid, step_num, b64 = item
                 try:
-                    await websocket.send_json({
+                    await _safe_send({
                         "phase": "swarming",
                         "type": "screenshot",
                         "agent_id": aid,
@@ -510,7 +901,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     "failure_classification": step.get("failure_classification"),
                 })
 
-            await websocket.send_json({
+            await _safe_send({
                 "phase": "swarming",
                 "agent_id": result.get("agent_id", persona["id"]),
                 "persona_name": persona["name"],
@@ -538,7 +929,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                         annotated_b64 = await annotate_screenshot(
                             last_b64, findings, url
                         )
-                        await websocket.send_json({
+                        await _safe_send({
                             "phase": "swarming",
                             "type": "annotated_screenshot",
                             "agent_id": result.get("agent_id", persona["id"]),
@@ -552,7 +943,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         # Launch Chromium browsers, distribute agents across them
         from playwright.async_api import async_playwright as pw_start
 
-        NUM_BROWSERS = min(int(os.getenv("NUM_BROWSERS", "10")), 10, agent_count)
+        NUM_BROWSERS = min(int(os.getenv("NUM_BROWSERS", "15")), agent_count)
         headed = os.getenv("HEADLESS", "true").lower() == "false"
 
         _log_event("info", f"[{test_id[:8]}] launching {NUM_BROWSERS} Chromium browsers (headed={headed})...")
@@ -589,7 +980,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             browser_num = idx % NUM_BROWSERS + 1
             _log_event("info", f"[{test_id[:8]}] [{_agents_started}/{len(personas)}] {name} -> browser {browser_num}")
             try:
-                await websocket.send_json({
+                await _safe_send({
                     "phase": "swarming",
                     "type": "log",
                     "level": "info",
@@ -664,12 +1055,70 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
         test["agent_results"] = final_results
 
+        # ── Collect external API results ─────────────────────
+        external_api_data = None
+        try:
+            external_api_data = await asyncio.wait_for(external_api_task, timeout=35.0)
+            meta = external_api_data.get("metadata", {})
+            _log_event("info",
+                f"[{test_id[:8]}] external APIs complete — "
+                f"{meta.get('apis_succeeded', 0)} succeeded, "
+                f"{meta.get('apis_failed', 0)} failed, "
+                f"{meta.get('total_duration_ms', 0)}ms"
+            )
+        except asyncio.TimeoutError:
+            _log_event("warning", f"[{test_id[:8]}] external APIs timed out after 35s")
+        except Exception as exc:
+            _log_event("warning", f"[{test_id[:8]}] external APIs error: {str(exc)[:150]}")
+
+        test["external_api_data"] = external_api_data
+
+        # ── Phase 2b: Scoring ─────────────────────────────────
+        # Calculate composite scores from all collected data before report gen
+        _log_event("info", f"[{test_id[:8]}] calculating composite scores...")
+        scoring_ext = _build_scoring_external(external_api_data) if external_api_data else {}
+        composite = calculate_scores(crawl_data, final_results, scoring_ext)
+        composite_dict = composite.to_dict()
+        test["composite_scores"] = composite_dict
+        _log_event("info",
+            f"[{test_id[:8]}] scores: {composite.overall_score:.0f} ({composite.letter_grade}) | "
+            + ", ".join(f"{c.name}={c.score:.0f}" for c in composite.categories)
+        )
+
+        # Send scores to frontend immediately
+        try:
+            await _safe_send({
+                "phase": "scoring",
+                "status": "complete",
+                "scores": {
+                    "overall_score": composite.overall_score,
+                    "letter_grade": composite.letter_grade,
+                    "categories": {
+                        c.name: {"score": round(c.score, 1), "weight": c.weight}
+                        for c in composite.categories
+                    },
+                },
+            })
+        except Exception:
+            pass
+
+        # ── Phase 2c: Quick Wins ──────────────────────────────
+        _log_event("info", f"[{test_id[:8]}] analysing quick wins...")
+        qw_list = generate_quick_wins(composite, crawl_data, final_results, scoring_ext)
+        test["quick_wins"] = qw_list
+        _log_event("info", f"[{test_id[:8]}] {len(qw_list)} quick wins identified")
+
         # ── Phase 3: Reporting ────────────────────────────────
         test["status"] = "reporting"
         _log_event("info", f"[{test_id[:8]}] report generation started")
-        await websocket.send_json({"phase": "reporting", "status": "started"})
+        await _safe_send({"phase": "reporting", "status": "started"})
 
-        report = await generate_report(crawl_data, final_results)
+        report = await generate_report(
+            crawl_data, final_results,
+            external_api_data=external_api_data,
+            composite_scores=composite_dict,
+            quick_wins=qw_list,
+        )
         _log_event("info", f"[{test_id[:8]}] report generated — score={report.get('score', {}).get('overall', '?')}")
 
         # Generate LLM fix prompt using Gemini Flash
@@ -699,9 +1148,36 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     screenshots_store[test_id][f"{pid}/{step_num}"] = b64
                     ss["screenshot_url"] = f"/v1/tests/{test_id}/screenshots/{pid}/{step_num}"
 
-        await websocket.send_json({
+        await _safe_send({
             "phase": "reporting", "status": "complete", "report": ws_report,
         })
+
+        # ── Phase 4: Persist to database + cache ─────────────────
+        pipeline_duration = time.time() - test["created_at"]
+        try:
+            analysis_id = await persist_analysis(
+                url=url,
+                report=report,
+                sessions=final_results,
+                crawl_data=crawl_data,
+                execution_time_seconds=pipeline_duration,
+            )
+            if analysis_id:
+                test["analysis_id"] = analysis_id
+                _log_event("info", f"[{test_id[:8]}] persisted as analysis {analysis_id[:8]}")
+                # Send the analysis_id to the frontend so it can link to /v1/report/{id}
+                try:
+                    await _safe_send({
+                        "phase": "persisted",
+                        "analysis_id": analysis_id,
+                    })
+                except Exception:
+                    pass
+            else:
+                _log_event("info", f"[{test_id[:8]}] persistence skipped (no DB/cache configured)")
+        except Exception:
+            _log_event("warning", f"[{test_id[:8]}] persistence failed (non-fatal)")
+            log.exception("Persistence error for test %s", test_id[:8])
 
     except WebSocketDisconnect:
         test["status"] = "disconnected"
@@ -711,7 +1187,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         _log_event("error", f"[{test_id[:8]}] PIPELINE ERROR: {str(exc)[:300]}")
         log.error(f"Pipeline error: {traceback.format_exc()}")
         try:
-            await websocket.send_json({
+            await _safe_send({
                 "phase": "error", "message": str(exc)[:300],
             })
         except Exception:

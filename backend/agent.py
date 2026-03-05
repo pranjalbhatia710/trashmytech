@@ -316,6 +316,74 @@ def _build_persona_perspective(persona: dict) -> str:
             "Are there awkward gaps? Does the grid break? You test what most developers never "
             "test — the high-end display experience."
         ),
+        # Content / SEO personas
+        "S1": (
+            f"As {name}, you are a content evaluator and SEO specialist. You read EVERY word on the "
+            "page. You judge websites by content quality and search engine readability. Your priorities: "
+            "1) Read all visible text and judge readability — is it too complex or too simple for the "
+            "target audience? 2) Check heading hierarchy — is there exactly one H1? Are heading levels "
+            "skipped (H1 to H3 with no H2)? Are there duplicate headings? 3) Examine meta tags — does "
+            "the title exist and is it 50-60 chars? Is there a meta description of 150-160 chars? "
+            "Is there a canonical URL? 4) Look for structured data (JSON-LD) — does the page have "
+            "schema markup? 5) Check every image for alt text. 6) Count internal vs external links "
+            "and flag broken ones (href='#', empty href, javascript:void). 7) Evaluate above-the-fold "
+            "content — can you tell what this site does without scrolling? 8) Look for trust signals "
+            "in the footer/nav: privacy policy, terms, contact, about links. For every observation, "
+            "explain the SEO impact — how does this affect search engine rankings?"
+        ),
+        "S2": (
+            f"As {name}, you are a value proposition tester. You give every website exactly 5 seconds "
+            "of attention above the fold — just like a real first-time visitor. You judge by: "
+            "1) H1 clarity — is there an H1 visible without scrolling? Does it communicate what this "
+            "product/service DOES in plain language? Flag vague H1s (less than 4 words, generic phrases "
+            "like 'Welcome' or 'Hello World'). 2) CTA evaluation — find all buttons and links styled "
+            "as calls-to-action above the fold. Flag vague CTAs: 'Learn More', 'Get Started', 'Submit', "
+            "'Click Here', 'Read More'. Good CTAs tell you what happens when you click. 3) The 5-second "
+            "test — in the first ~25 words visible, can you determine: what the product/service is, "
+            "who it's for, and what action to take? Rate clarity 1-5. 4) Value proposition rating — "
+            "is the value prop 'clear', 'somewhat_clear', 'vague', or 'missing'? Be brutally honest. "
+            "If YOU can't figure out what this site does in 5 seconds, neither can Google."
+        ),
+        "S3": (
+            f"As {name}, you are a skeptic reader. You don't trust ANY website until it proves itself. "
+            "You actively hunt for trust signals: 1) Navigate looking for Privacy Policy, Terms of "
+            "Service, About page, Team/Founders page, Contact information, and physical address. "
+            "2) For each trust page: can it be found within 2 clicks from the homepage? Check footer "
+            "links, navigation menus, and common link locations. 3) Look for social proof — "
+            "testimonials, reviews, client logos, case studies, team photos. 4) Check for red flags: "
+            "broken links, outdated copyright years, missing HTTPS, placeholder content, stock photos "
+            "without context. 5) Give a trust assessment: would a cautious person trust this site "
+            "enough to enter their credit card? Score based on trust pages found, findability, "
+            "physical address, and contact methods. Missing privacy policy or terms = critical failure."
+        ),
+        "S4": (
+            f"As {name}, you ARE Googlebot — Google's web crawler. You see websites the way a search "
+            "engine sees them. Your priorities: 1) Check if this page has proper meta tags for SEO — "
+            "title tag, meta description, canonical URL. 2) Examine heading structure — H1 is the "
+            "primary topic signal. Missing H1 severely hurts rankings. 3) Look for structured data "
+            "(JSON-LD schema markup) — does it exist? What @type is it? 4) Check for JavaScript "
+            "rendering dependency — is the page content visible in the HTML or only rendered by JS? "
+            "Content that requires JS to appear may not be indexed. 5) Evaluate mobile-friendliness — "
+            "is content readable, are touch targets sized properly? 6) Check page load speed — note "
+            "how fast content appears. FCP under 1.8s is good, over 3s is poor. 7) Analyze internal "
+            "and external links — are they crawlable? Are there broken links? 8) Check image alt text "
+            "coverage — images without alt text are invisible to search engines. 9) Look for sitemap "
+            "and robots.txt references. Every observation should explain the SEO ranking impact."
+        ),
+        "S5": (
+            f"As {name}, you are a social media sharing bot. When someone shares a link on Twitter, "
+            "Facebook, LinkedIn, or Slack, YOU determine what the preview looks like. You judge by: "
+            "1) Open Graph tags — look for og:title, og:description, og:image, og:type, og:url, "
+            "og:site_name in the page source. Flag missing required tags. Check og:title length "
+            "(optimal 40-60 chars) and og:description length (optimal 100-200 chars). 2) Twitter "
+            "Card tags — look for twitter:card, twitter:title, twitter:description, twitter:image. "
+            "Check card type validity (summary, summary_large_image). 3) Share image — is og:image "
+            "present? Does it look like a real image URL? 4) Compose a mental picture of what the "
+            "share preview would look like: title shown, description shown, image present or missing. "
+            "Rate the preview: 'good' (all tags present, good lengths), 'acceptable' (basic tags "
+            "present), 'poor' (missing key tags), or 'broken' (no OG tags at all). Bad share previews "
+            "mean fewer clicks from social media, which reduces traffic and indirect SEO signals."
+        ),
     }
 
     if pid in perspectives:
@@ -375,6 +443,63 @@ def _build_behavioral_rules(persona: dict) -> str:
         rules.append("You are evaluating this as a professional. You click through projects, check external links, look for a resume/CV, and judge the overall quality. Dead links and missing content are deal-breakers. Comment on whether this person is HIREABLE.")
     if task == "explorer":
         rules.append("You click EVERY link and button you can find. Your goal is to map the entire site and find broken paths.")
+    if task == "content_evaluator":
+        rules.append(
+            "You MUST read ALL visible text on every page you visit. In your observations, report: "
+            "1) Word count estimate for the page. "
+            "2) Whether the content is readable (simple, moderate, or complex vocabulary). "
+            "3) The heading structure you see — list all H1, H2, H3 tags and flag if H1 is missing or duplicated, or if levels are skipped. "
+            "4) Whether you see a page title, meta description content, and canonical URL. "
+            "5) Whether there are images missing alt text. "
+            "6) Count of internal links vs external links vs broken links (href='#' or empty). "
+            "7) Whether the above-the-fold content explains what the site does. "
+            "8) Whether trust signal links exist (privacy, terms, contact, about). "
+            "Scroll through the ENTIRE page to evaluate all content. Visit at least 2 pages."
+        )
+    if task == "value_prop_tester":
+        rules.append(
+            "You MUST focus on above-the-fold content FIRST before scrolling. In your observations, report: "
+            "1) What the H1 says (exact text) and whether it clearly explains the product/service. "
+            "2) All CTA button/link text visible above the fold — flag any that are vague ('Learn More', 'Get Started', 'Submit', 'Click Here'). "
+            "3) Your 5-second test rating (1-5): can you determine what this site does, who it's for, and what action to take from the first 25 words? "
+            "4) Overall value proposition rating: 'clear', 'somewhat_clear', 'vague', or 'missing'. "
+            "Do NOT scroll until you have evaluated the above-the-fold content. Then scroll to compare."
+        )
+    if task == "skeptic_reader":
+        rules.append(
+            "You MUST actively search for trust signals. In your observations, report: "
+            "1) Navigate to find: Privacy Policy, Terms of Service, About page, Contact page. "
+            "2) For each: report whether found and how many clicks from homepage (0, 1, or 2+). "
+            "3) Check for social proof: testimonials, reviews, client logos, team bios. "
+            "4) Flag red flags: broken links, outdated copyright year, missing HTTPS, placeholder text. "
+            "5) Give your trust verdict: would you enter your credit card on this site? "
+            "Click footer links, check navigation for trust pages. Be thorough."
+        )
+    if task == "googlebot_simulator":
+        rules.append(
+            "You are simulating a search engine crawler. In your observations, report: "
+            "1) Title tag text and length (optimal: 50-60 chars). "
+            "2) Whether an H1 exists and its text — H1 is the primary topic signal for rankings. "
+            "3) Meta description presence and whether content matches the page. "
+            "4) Heading hierarchy — are H1-H6 properly nested without skips? "
+            "5) Image alt text coverage — count images with and without alt text. "
+            "6) Internal link count and whether links use descriptive anchor text. "
+            "7) Whether you see structured data (JSON-LD) or schema markup. "
+            "8) Page load feel — did content appear quickly or was there a delay? "
+            "9) Mobile readability — is text readable, are elements properly sized? "
+            "Scroll through the entire page methodically. Note every SEO signal you find."
+        )
+    if task == "social_bot_simulator":
+        rules.append(
+            "You are simulating social media platform crawlers (Facebook, Twitter, LinkedIn). In your observations, report: "
+            "1) Look for Open Graph tags in the visible page or meta info: og:title, og:description, og:image, og:url. "
+            "2) Look for Twitter Card tags: twitter:card, twitter:title, twitter:description, twitter:image. "
+            "3) Flag any missing required tags — og:title, og:description, and og:image are essential for good share previews. "
+            "4) Check the page title and meta description as fallbacks if OG tags are missing. "
+            "5) Rate the share preview quality: 'good', 'acceptable', 'poor', or 'broken'. "
+            "6) Describe what a shared link preview would look like: what title, description, and image would show. "
+            "Focus on the homepage first, then check one or two subpages."
+        )
 
     cat = persona.get("category", "")
     if cat == "portfolio":
@@ -385,6 +510,13 @@ def _build_behavioral_rules(persona: dict) -> str:
         rules.append("You are actively trying to BREAK things. Your observations should note what happens when you abuse the interface.")
     if cat == "demographic":
         rules.append("Your observations should reflect your real-world constraints. Comment on how someone like you would genuinely experience this site.")
+    if cat == "content_seo":
+        rules.append(
+            "Every observation MUST include SEO impact analysis. Explain how each finding affects search engine rankings, "
+            "social media discoverability, or content quality signals. Use specific SEO terminology: crawlability, indexability, "
+            "E-E-A-T signals, Core Web Vitals, structured data, semantic HTML, link equity, anchor text, canonicalization. "
+            "Your findings should be structured with type, severity (info/warning/error/critical), detail, and seo_impact."
+        )
 
     return "\n".join(f"- {r}" for r in rules) if rules else "- Act naturally."
 
@@ -548,6 +680,7 @@ async def _inject_overlays(page, headed: bool, persona: dict | None = None):
             cat_colors = {
                 "accessibility": "#3b82f6", "chaos": "#ef4444",
                 "demographic": "#14b8a6", "behavioral": "#8b5cf6",
+                "content_seo": "#f59e0b",
             }
             color = cat_colors.get(persona.get("category", ""), "#7a8099")
             name = persona.get("name", "Agent").replace("'", "\\'")
@@ -790,9 +923,13 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
     final_url = url
     headed = os.getenv("HEADLESS", "false").lower() == "false"
 
+    # For bot personas (age=None), use "automated" instead of a numeric age
+    persona_age = persona.get("age")
+    age_str = str(persona_age) if persona_age is not None else "automated"
+
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         name=persona.get("name", "Unknown"),
-        age=persona.get("age", "unknown"),
+        age=age_str,
         description=persona.get("description", ""),
         task_style=persona.get("task_style", "normal"),
         persona_perspective=_build_persona_perspective(persona),
@@ -1116,9 +1253,15 @@ async def _generate_persona_analysis(client, persona: dict, result: dict, url: s
     from google.genai.types import GenerateContentConfig
 
     name = persona.get("name", "Unknown")
-    age = persona.get("age", "?")
+    age = persona.get("age")
     desc = persona.get("description", "")
     cat = persona.get("category", "")
+
+    # For bot personas (age=None), use an appropriate identity string
+    if age is not None:
+        identity_str = f"You are {name}, a {age}-year-old. {desc}"
+    else:
+        identity_str = f"You are {name}, an automated bot. {desc}"
 
     # Summarize what the agent saw and did
     steps_summary = []
@@ -1136,7 +1279,7 @@ async def _generate_persona_analysis(client, persona: dict, result: dict, url: s
     for f in result.get("findings", [])[:10]:
         findings_text += f"  - [{f.get('type', '?')}] {f.get('title', '')}: {f.get('detail', '')[:100]}\n"
 
-    prompt = f"""You are {name}, a {age}-year-old. {desc}
+    prompt = f"""{identity_str}
 
 You just finished browsing {url}. Here's what you did and saw:
 
@@ -1153,7 +1296,12 @@ OUTCOME: {result.get('outcome', 'unknown')}
 TIME SPENT: {result.get('total_time_ms', 0)}ms
 
 Now write your HONEST, PERSONAL verdict on this website. You are {name} — use first person, be opinionated, be specific. Reference things you actually saw.
-
+{f"""
+Since you are a content/SEO specialist, focus your verdicts on:
+- form_verdict: Judge the content STRUCTURE — heading hierarchy, meta tags, structured data, semantic HTML quality
+- function_verdict: Judge SEO FUNCTIONALITY — are links crawlable, do images have alt text, is content indexable, are there broken links
+- purpose_verdict: Judge DISCOVERABILITY — would search engines understand this page's purpose? Is the value proposition clear? Are social sharing tags present?
+""" if cat == "content_seo" else ""}
 Return ONLY valid JSON:
 {{
   "form_verdict": "2-3 sentences judging the VISUAL DESIGN — layout, typography, colors, spacing, aesthetics. What looks good? What looks amateur? Would you trust a site that looks like this?",

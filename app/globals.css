@@ -112,8 +112,16 @@ body {
 
 /* ── Animations ─────────────────────────────────────── */
 @keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .cursor-blink::after {
@@ -124,32 +132,67 @@ body {
 }
 
 @keyframes count-in {
-  from { opacity: 0; transform: scale(0.5); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes subtle-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 164, 74, 0); }
-  50% { box-shadow: 0 0 20px 4px rgba(232, 164, 74, 0.15); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 164, 74, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 20px 4px rgba(232, 164, 74, 0.15);
+  }
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes spin-slow {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── Utility classes ────────────────────────────────── */
@@ -159,6 +202,7 @@ body {
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-default);
   border-radius: 8px;
+  transition: all 0.35s var(--ease-out-expo);
 }
 
 .glass-card-hover {
@@ -168,6 +212,8 @@ body {
 .glass-card-hover:hover {
   background: rgba(26, 26, 31, 0.95);
   border-color: var(--border-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
 }
 
 .text-gradient-amber {
@@ -200,15 +246,68 @@ body {
 }
 
 /* Stagger children for fade-up */
-.stagger-children > * { animation: fade-up 0.5s var(--ease-out-expo) both; }
-.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-children > *:nth-child(2) { animation-delay: 80ms; }
-.stagger-children > *:nth-child(3) { animation-delay: 160ms; }
-.stagger-children > *:nth-child(4) { animation-delay: 240ms; }
-.stagger-children > *:nth-child(5) { animation-delay: 320ms; }
-.stagger-children > *:nth-child(6) { animation-delay: 400ms; }
-.stagger-children > *:nth-child(7) { animation-delay: 480ms; }
-.stagger-children > *:nth-child(8) { animation-delay: 560ms; }
+.stagger-children>* {
+  animation: fade-up 0.5s var(--ease-out-expo) both;
+}
+
+.stagger-children>*:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.stagger-children>*:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.stagger-children>*:nth-child(3) {
+  animation-delay: 160ms;
+}
+
+.stagger-children>*:nth-child(4) {
+  animation-delay: 240ms;
+}
+
+.stagger-children>*:nth-child(5) {
+  animation-delay: 320ms;
+}
+
+.stagger-children>*:nth-child(6) {
+  animation-delay: 400ms;
+}
+
+.stagger-children>*:nth-child(7) {
+  animation-delay: 480ms;
+}
+
+.stagger-children>*:nth-child(8) {
+  animation-delay: 560ms;
+}
+
+/* ── Interactive card hover lift ───────────────────── */
+.hover-lift {
+  transition: transform 0.25s var(--ease-out-expo), box-shadow 0.25s var(--ease-out-expo);
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(232, 164, 74, 0.08);
+}
+
+/* ── Score gauge glow ──────────────────────────────── */
+@keyframes score-pulse {
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 8px rgba(232, 164, 74, 0.15));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 16px rgba(232, 164, 74, 0.3));
+  }
+}
+
+.score-glow {
+  animation: score-pulse 3s ease-in-out infinite;
+}
 
 /* ── Section headers (editorial style) ──────────────── */
 .section-label {
@@ -220,15 +319,37 @@ body {
   color: var(--text-muted);
 }
 
+/* ── Smooth section transitions ─────────────────────── */
+.report-section {
+  animation: fade-up 0.6s var(--ease-out-expo) both;
+}
+
+/* ── Button interaction states ──────────────────────── */
+button,
+a[role="button"],
+[data-interactive] {
+  transition: all 0.2s var(--ease-out-expo);
+}
+
+button:active:not(:disabled),
+a[role="button"]:active {
+  transform: scale(0.98);
+}
+
 /* ── Print styles ───────────────────────────────────── */
 @media print {
   body {
     background: white !important;
     color: #111 !important;
   }
+
   .glass-card {
     background: #f9f9f9 !important;
     border: 1px solid #ddd !important;
   }
-  header, footer { display: none !important; }
+
+  header,
+  footer {
+    display: none !important;
+  }
 }

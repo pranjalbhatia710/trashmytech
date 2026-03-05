@@ -1,6 +1,11 @@
-"""trashmy.tech — Report generator using Gemini Pro with deep thinking + structured JSON."""
+"""trashmy.tech — Report generator using Gemini Pro with deep thinking + structured JSON.
+
+Enhanced with composite scoring system, quick wins analysis, and full
+external-API data injection so the generated report cites concrete numbers.
+"""
 
 import json
+import logging
 import os
 import asyncio
 import traceback
@@ -9,6 +14,8 @@ from google import genai
 from google.genai.types import GenerateContentConfig
 
 from annotator import annotate_overview_screenshot
+
+log = logging.getLogger("trashmy.report")
 
 # ---------------------------------------------------------------------------
 # Model strategy — one API key, two models
@@ -30,14 +37,23 @@ SCORING RULES:
 - If >50% of agents hit tool_limitation, set confidence to "low" and say "partially tested".
 - CALIBRATION ANCHORS:
   * 90-100: Near-perfect. Fast, accessible, no real issues found. Very rare.
-  * 75-89: Polished professional site. Fast load, clean UX, minor gaps.
-  * 60-74: Decent site with real usability problems.
-  * 40-59: Significant problems. Users struggle to complete tasks.
-  * 0-39: Fundamentally broken.
+  * 80-89: Polished professional site. Fast load, clean UX, minor gaps. Major brand sites like Google, Apple, Stripe score here.
+  * 65-79: Decent site with real usability problems.
+  * 45-64: Significant problems. Users struggle to complete tasks.
+  * 0-44: Fundamentally broken.
+- REFERENCE CALIBRATION (for context, not for copying):
+  * google.com ≈ 92 — world-class performance, accessibility, security
+  * apple.com ≈ 88 — excellent design, fast, minor accessibility gaps
+  * stripe.com ≈ 90 — exceptional docs, accessibility, developer experience
+  * github.com ≈ 85 — complex app, good UX, some accessibility issues
+  * A typical small business WordPress site ≈ 50-65
+  * A broken side project ≈ 20-40
+- EXTERNAL API DATA IS GROUND TRUTH: When Lighthouse/PageSpeed scores are 85+, Observatory grade is A+/A, SSL is valid, and Safe Browsing is clean, the site is OBJECTIVELY well-built. Trust this data. Tool limitations from Playwright do NOT override these objective measurements.
 - Missing image alt text alone should NOT drop a polished site below 70.
 - Fast load time (<2s) is a strong positive signal.
-- NEVER score below 40 based only on tool_limitation findings.
+- NEVER score below 40 based only on tool_limitation findings. If external APIs show high scores, NEVER score below 65.
 - The base_score provided is a starting calibration. You may adjust ±15 points based on your analysis, but explain why.
+- When tool_limitations dominate and external APIs score well, ALWAYS score HIGHER than the base_score, not lower.
 
 REPORT STRUCTURE (follow this exactly):
 
@@ -45,19 +61,24 @@ REPORT STRUCTURE (follow this exactly):
 
 2. THE THIRTY-SECOND VERSION: 3-4 sentences. A busy CEO reads this and understands the full picture. Reference the most critical finding AND the strongest positive.
 
-3. SIX SCORES with detailed reasoning:
-   - Accessibility: [score]/100 -- 2-3 sentences with specific violations cited (axe IDs, WCAG criteria)
-   - Security: [score]/100 -- 2-3 sentences noting form validation, input handling, HTTPS, headers
-   - Usability: [score]/100 -- 2-3 sentences referencing specific persona experiences
-   - Mobile: [score]/100 -- 2-3 sentences citing viewport data from mobile personas
-   - Performance: [score]/100 -- 2-3 sentences with load time, bundle observations
-   - AI Readability: [score]/100 -- 2-3 sentences about structured data, meta tags, semantic HTML
+3. SIX CATEGORY DETAILS (scores are pre-calculated -- provide reasoning only):
+   - accessibility: 2-3 sentences with specific violations cited (axe IDs, WCAG criteria)
+   - seo: 2-3 sentences about SEO signals, AI readability, structured data, meta tags, semantic HTML
+   - performance: 2-3 sentences with load time, Core Web Vitals, bundle observations
+   - content: 2-3 sentences about readability, heading structure, trust signals, value proposition
+   - security: 2-3 sentences noting headers, HTTPS, Observatory grade, SSL, DNS auth
+   - ux: 2-3 sentences referencing specific persona experiences, task completion, mobile usability
 
-AI READABILITY scoring guidance:
-- 90-100: Has JSON-LD, OG tags, llms.txt, semantic HTML, structured data, sitemap, no AI bots blocked
-- 70-89: Most signals present but missing 1-2 key items
-- 50-69: Basic SEO present but poor AI discoverability
-- 0-49: Minimal signals
+EXTERNAL API DATA: If "external_api_data" is present in the test data, USE it to enrich your analysis:
+- PageSpeed Insights: Use Lighthouse scores and Core Web Vitals (LCP, FCP, TBT, CLS) for the Performance score. Reference specific metrics.
+- Mozilla Observatory: Use the security grade and failed tests for the Security score. Reference specific missing headers (CSP, HSTS, etc.).
+- Safe Browsing: If the site is flagged, mention it prominently as a CRITICAL security issue.
+- SSL certificate: Use validity, days until expiry, and protocol for Security score. Flag expired or soon-expiring certs.
+- DNS (SPF/DMARC): Use for Security score — missing email authentication is a security gap.
+- Carbon/Green Web: Mention environmental impact in recommendations if data is available.
+- WHOIS/domain age: Young domains (<1 year) may have lower trust signals.
+- Technologies detected: Reference detected tech stack in the analysis where relevant.
+When external API data is NOT available (null), rely on the crawl data and persona observations as before.
 
 4. FORM ANALYSIS (visual design verdict):
    2-3 paragraphs analyzing the site's visual design, typography, color usage, spacing, layout quality, and aesthetic coherence. Reference specific persona reactions (especially from visual-focused personas like P4 Leah Fontaine). Include their direct quotes from persona_analysis.form_verdict when available.
@@ -94,8 +115,28 @@ AI READABILITY scoring guidance:
    THIS SECTION SHOULD BE DETAILED. Each persona verdict should be 4-8 sentences minimum.
    If a persona was blocked by tool_limitation, acknowledge it but still report what they DID observe.
 
-10. TOP 5 RECOMMENDATIONS (ordered by impact):
+10. QUICK WINS (if provided in test data):
+    Present the quick wins from the "quick_wins" section of the test data.
+    For each quick win, explain:
+    - What to fix and why (use the action and details fields)
+    - Estimated score improvement: "+X points to [category] (+Y overall)"
+    - Difficulty level (easy/medium/hard)
+    - Which personas would benefit
+    Format these as a prioritised, actionable checklist.
+
+11. TOP 5 RECOMMENDATIONS (ordered by impact):
     Each: 2-3 sentences describing what to do, why it matters, estimated user impact percentage, and implementation complexity (easy/medium/hard).
+
+COMPOSITE SCORING DATA:
+If "composite_scores" is present in the test data, it contains pre-calculated scores
+from our scoring engine. USE these scores as your primary reference:
+- The overall_score and letter_grade are the authoritative scores.
+- Each category (accessibility, seo, performance, security, content, ux) has a
+  breakdown dict showing exactly which sub-metrics contributed.
+- Reference these numbers directly: "Our scoring engine rates your accessibility
+  at 62/100, primarily due to 14 missing alt texts (alt_text_coverage: 42)."
+- You may adjust the narrative tone based on the letter grade but do NOT change
+  the numeric scores -- they are computed deterministically.
 
 RULES FOR NARRATIVES:
 - USE persona_analysis data extensively — it contains the persona's own words about form, function, and purpose
@@ -117,13 +158,13 @@ REPORT_SCHEMA = """{
 
   "thirty_second_summary": "3-4 sentence executive summary",
 
-  "category_scores": {
-    "accessibility": {"score": 0, "detail": "2-3 sentences with specific data"},
-    "security": {"score": 0, "detail": "2-3 sentences"},
-    "usability": {"score": 0, "detail": "2-3 sentences referencing persona experiences"},
-    "mobile": {"score": 0, "detail": "2-3 sentences with viewport data"},
-    "performance": {"score": 0, "detail": "2-3 sentences with load time data"},
-    "ai_readability": {"score": 0, "detail": "2-3 sentences about structured data and SEO"}
+  "category_details": {
+    "accessibility": "2-3 sentences with specific data (axe IDs, WCAG criteria)",
+    "seo": "2-3 sentences about SEO, AI readability, structured data",
+    "performance": "2-3 sentences with load time, Core Web Vitals",
+    "content": "2-3 sentences about readability, trust signals, value prop",
+    "security": "2-3 sentences about headers, SSL, Observatory grade",
+    "ux": "2-3 sentences referencing persona experiences, task completion"
   },
 
   "form_analysis": "2-3 paragraphs analyzing visual design, typography, colors, spacing, layout. Quote persona reactions.",
@@ -159,6 +200,8 @@ REPORT_SCHEMA = """{
       "trust_level": "high|medium|low|none",
       "time_seconds": 0,
       "steps_taken": 0,
+      "narrative": "2-3 sentence summary of this persona's overall experience",
+      "primary_barrier": "the single biggest obstacle they faced, or null",
       "emotional_journey": "1-2 sentences describing their experience arc",
       "key_quote": "their most memorable reaction in their own words",
       "form_verdict": "2-3 sentences — their opinion on visual design",
@@ -168,6 +211,10 @@ REPORT_SCHEMA = """{
       "issues_encountered": ["list of specific issues this persona hit"],
       "key_screenshot_step": null
     }
+  ],
+
+  "quick_wins_summary": [
+    {"action": "short action description", "category": "scoring category", "estimated_points": "+X category / +Y overall", "difficulty": "easy|medium|hard"}
   ],
 
   "recommendations": [
@@ -268,11 +315,134 @@ def _compute_base_score(crawl_data: dict, stats: dict, sessions: list[dict]) -> 
     return min(overall, 100)
 
 
+def _summarize_external_apis(data: dict | None) -> dict | None:
+    """Summarize external API data for inclusion in the Gemini prompt payload.
+
+    Keeps only the most relevant fields to stay within token limits.
+    """
+    if not data:
+        return None
+
+    summary: dict = {}
+
+    # PageSpeed — include scores and web vitals
+    ps = data.get("pagespeed")
+    if ps:
+        summary["pagespeed"] = {}
+        for strategy in ("mobile", "desktop"):
+            s = ps.get(strategy)
+            if s:
+                summary["pagespeed"][strategy] = {
+                    "scores": s.get("scores"),
+                    "web_vitals": s.get("web_vitals"),
+                    "top_failed_audits": [
+                        {"id": a["id"], "title": a["title"]}
+                        for a in (s.get("failed_audits") or [])[:8]
+                    ],
+                }
+
+    # Observatory — grade and failed tests
+    obs = data.get("observatory")
+    if obs:
+        failed_tests = {
+            k: v.get("result")
+            for k, v in (obs.get("tests") or {}).items()
+            if not v.get("pass")
+        }
+        summary["security_observatory"] = {
+            "grade": obs.get("grade"),
+            "score": obs.get("score"),
+            "tests_passed": obs.get("tests_passed"),
+            "tests_failed": obs.get("tests_failed"),
+            "failed_tests": failed_tests,
+        }
+
+    # Safe Browsing
+    sb = data.get("safe_browsing")
+    if sb:
+        summary["safe_browsing"] = {
+            "safe": sb.get("safe"),
+            "threats_count": sb.get("threats_count", 0),
+        }
+
+    # Carbon / environmental
+    carbon = data.get("carbon")
+    green = data.get("green_web")
+    if carbon or green:
+        summary["environmental"] = {}
+        if carbon:
+            summary["environmental"]["co2_grams_per_visit"] = carbon.get("co2_grams_per_visit")
+            summary["environmental"]["cleaner_than"] = carbon.get("cleaner_than")
+        if green:
+            summary["environmental"]["green_hosting"] = green.get("green")
+            summary["environmental"]["hosted_by"] = green.get("hosted_by")
+
+    # DNS
+    dns_data = data.get("dns")
+    if dns_data:
+        summary["dns_email_security"] = {
+            "has_spf": dns_data.get("has_spf", False),
+            "has_dmarc": dns_data.get("has_dmarc", False),
+            "mx_count": len(dns_data.get("mx_records") or []),
+            "ipv6": len(dns_data.get("aaaa_records") or []) > 0,
+        }
+
+    # SSL
+    ssl_data = data.get("ssl")
+    if ssl_data:
+        summary["ssl_certificate"] = {
+            "valid": ssl_data.get("valid"),
+            "days_until_expiry": ssl_data.get("days_until_expiry"),
+            "issuer": ssl_data.get("issuer", {}).get("organization", ""),
+            "protocol": ssl_data.get("protocol_version"),
+        }
+
+    # WHOIS
+    whois_data = data.get("whois")
+    if whois_data:
+        summary["domain_info"] = {
+            "domain_age_days": whois_data.get("domain_age_days"),
+            "registrar": whois_data.get("registrar"),
+            "expiration_date": whois_data.get("expiration_date"),
+        }
+
+    # Technologies
+    tech = data.get("technologies")
+    if tech:
+        summary["technologies_detected"] = {
+            k: v for k, v in tech.items() if k != "total_detected"
+        }
+        summary["technologies_detected"]["total"] = tech.get("total_detected", 0)
+
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Main report generation
 # ---------------------------------------------------------------------------
-async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
-    """Generate report using Gemini 3.1 Pro with thinking + structured JSON."""
+async def generate_report(
+    crawl_data: dict,
+    sessions: list[dict],
+    external_api_data: dict | None = None,
+    composite_scores: dict | None = None,
+    quick_wins: list[dict] | None = None,
+) -> dict:
+    """Generate report using Gemini 2.5 Pro with thinking + structured JSON.
+
+    Parameters
+    ----------
+    crawl_data : dict
+        Output of ``crawl_site()``.
+    sessions : list[dict]
+        Per-persona agent results.
+    external_api_data : dict | None
+        Raw external API results (PageSpeed, Observatory, etc.).
+    composite_scores : dict | None
+        Output of ``scoring.calculate_scores().to_dict()`` -- pre-calculated
+        weighted scores for each category.
+    quick_wins : list[dict] | None
+        Output of ``quick_wins.generate_quick_wins()`` -- ranked actionable fixes.
+    """
     stats = _classify_sessions(sessions)
     base_score = _compute_base_score(crawl_data, stats, sessions)
 
@@ -403,8 +573,16 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
             f"{len(real_findings)} findings were real UX issues. "
             "Score based on real findings only. NEVER score below 40 on tool_limitation alone."
         ),
+        "external_api_data": _summarize_external_apis(external_api_data) if external_api_data else None,
+        "composite_scores": composite_scores,
+        "quick_wins": quick_wins,
         "sessions": [_summarize_session(s) for s in sessions],
     }, default=str)
+
+    log.info("Report payload size: %d chars, composite_scores=%s, quick_wins=%d",
+             len(payload),
+             composite_scores.get("letter_grade") if composite_scores else "N/A",
+             len(quick_wins) if quick_wins else 0)
 
     # Stats for response
     raw_stats = {
@@ -417,8 +595,20 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
         "fine_names": [s.get("persona", {}).get("name", "?") for s in stats["fine"]],
     }
 
-    # Build report shell
-    report = {"score": {"overall": base_score}, "stats": raw_stats}
+    # Build report shell -- use composite score as the authoritative overall if available
+    effective_score = (
+        composite_scores.get("overall_score", base_score)
+        if composite_scores else base_score
+    )
+    report: dict = {
+        "score": {
+            "overall": effective_score,
+            "letter_grade": composite_scores.get("letter_grade") if composite_scores else None,
+        },
+        "stats": raw_stats,
+        "composite_scores": composite_scores,
+        "quick_wins": quick_wins,
+    }
 
     try:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -457,13 +647,27 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
         narrative = json.loads(raw)
 
         # Map the new schema to our report structure
-        if "overall_score" in narrative:
-            report["score"]["overall"] = narrative["overall_score"]
-            report["score"]["reasoning"] = narrative.get("score_reasoning", "")
-            report["score"]["confidence"] = narrative.get("confidence", "moderate")
+        # Keep the deterministic overall score — only take reasoning from Gemini
+        report["score"]["reasoning"] = narrative.get("score_reasoning", "")
+        report["score"]["confidence"] = narrative.get("confidence", "moderate")
 
-        if "category_scores" in narrative:
-            report["category_scores"] = narrative["category_scores"]
+        # Build category_scores from deterministic composite_scores + Gemini detail text
+        gemini_details = narrative.get("category_details", {})
+        if composite_scores and "category_scores" in composite_scores:
+            report["category_scores"] = {}
+            for cat_name, cat_data in composite_scores["category_scores"].items():
+                report["category_scores"][cat_name] = {
+                    "score": cat_data["score"],
+                    "weight": cat_data.get("weight", 0),
+                    "detail": gemini_details.get(cat_name, ""),
+                    "breakdown": cat_data.get("breakdown", {}),
+                }
+        elif "category_details" in narrative:
+            # Fallback: no composite scores, use Gemini's detail only with no score
+            report["category_scores"] = {
+                k: {"score": 50, "detail": v}
+                for k, v in gemini_details.items()
+            }
 
         report["narrative"] = {
             "executive_summary": narrative.get("thirty_second_summary", ""),
@@ -484,11 +688,16 @@ async def generate_report(crawl_data: dict, sessions: list[dict]) -> dict:
                 "details": [f"{v.get('id')}: {v.get('description', '')}" for v in violations[:10]],
             },
             "recommendations": narrative.get("recommendations", []),
+            "quick_wins_summary": narrative.get("quick_wins_summary", []),
             "testing_notes": narrative.get("testing_notes", {}),
         }
 
         # Attach AI SEO data directly to report
         report["ai_seo"] = crawl_data.get("ai_seo", {})
+
+        # Attach external API data to report
+        if external_api_data:
+            report["external_api_data"] = external_api_data
 
         # Attach screenshot references
         report["sessions_summary"] = [
@@ -592,6 +801,26 @@ async def generate_fix_prompt(report: dict, url: str) -> str:
     ai_seo = report.get("ai_seo", {})
     ai_seo_checks = ai_seo.get("checks", [])
 
+    # Summarize external API data for the fix prompt
+    ext = report.get("external_api_data", {}) or {}
+    ext_summary = {}
+    obs = ext.get("observatory")
+    if obs:
+        failed = {k: v.get("result") for k, v in (obs.get("tests") or {}).items() if not v.get("pass")}
+        ext_summary["security_headers"] = {"grade": obs.get("grade"), "failed_tests": failed}
+    ssl_data = ext.get("ssl")
+    if ssl_data:
+        ext_summary["ssl"] = {"valid": ssl_data.get("valid"), "days_until_expiry": ssl_data.get("days_until_expiry")}
+    dns_data = ext.get("dns")
+    if dns_data:
+        ext_summary["dns_security"] = {"has_spf": dns_data.get("has_spf"), "has_dmarc": dns_data.get("has_dmarc")}
+    ps = ext.get("pagespeed")
+    if ps:
+        for strategy in ("mobile", "desktop"):
+            s = ps.get(strategy)
+            if s:
+                ext_summary[f"pagespeed_{strategy}"] = s.get("scores")
+
     findings_summary = json.dumps({
         "url": url,
         "overall_score": score,
@@ -600,6 +829,7 @@ async def generate_fix_prompt(report: dict, url: str) -> str:
         "what_doesnt_work": what_doesnt_work[:8],
         "recommendations": recommendations[:8],
         "ai_seo_checks": ai_seo_checks,
+        "external_api_findings": ext_summary if ext_summary else None,
     }, default=str)
 
     prompt = f"""You are generating a prompt that a developer can paste into ChatGPT or Claude to get code-level fixes for their website.
@@ -623,6 +853,12 @@ IMPORTANT — Include an "AI SEO / Generative Engine Optimization" section that 
 - Adding content freshness signals (dates, last-modified)
 - Creating/updating sitemap.xml
 - Making content citation-worthy for LLMs (clear headings, statistical evidence, quotable passages)
+
+If external_api_findings is present, also include a "Security Headers & Infrastructure" section covering:
+- Missing security headers from Mozilla Observatory (CSP, HSTS, X-Frame-Options, etc.)
+- SSL certificate issues
+- Missing SPF/DMARC DNS records for email security
+- PageSpeed performance improvements based on Lighthouse audit failures
 
 Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do not wrap in JSON."""
 

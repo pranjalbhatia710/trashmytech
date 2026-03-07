@@ -299,17 +299,17 @@ export default function Home() {
     <div className="min-h-screen relative overflow-hidden">
       <TrashAnimation active={trashActive} url={trashUrl} />
 
-      {/* Prismatic burst shader — deep immersive base layer */}
+      {/* Prismatic burst shader — ambient base layer */}
       <motion.div
         className="fixed inset-0 z-0"
         initial={{ opacity: 0 }}
-        animate={{ opacity: bgReady ? 0.85 : 0 }}
+        animate={{ opacity: bgReady ? 0.5 : 0 }}
         transition={{ duration: 2.5, ease: "easeOut" }}
       >
         <PrismaticBurst
           animationType="rotate3d"
-          intensity={2.2}
-          speed={0.4}
+          intensity={1.5}
+          speed={0.3}
           distort={0}
           paused={false}
           offset={{ x: 0, y: 0 }}
@@ -320,20 +320,20 @@ export default function Home() {
         />
       </motion.div>
 
-      {/* Flow field particles — interactive layer on top */}
+      {/* Flow field particles */}
       <motion.div
         className="fixed inset-0 z-[1]"
         initial={{ opacity: 0 }}
         animate={{ opacity: bgReady ? 1 : 0 }}
         transition={{ duration: 1.8, ease: "easeOut" }}
       >
-        <NeuralBackground color="#e8a44a" trailOpacity={0.012} particleCount={400} speed={0.7} intensity={0.5} formWord={formWord} />
+        <NeuralBackground color="#e8a44a" trailOpacity={0.015} particleCount={300} speed={0.6} intensity={0.35} formWord={formWord} />
       </motion.div>
 
       <div
         className="fixed inset-0 z-[2] pointer-events-none"
         style={{
-          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.15) 35%, rgba(8,9,13,0.7) 100%)",
+          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.2) 35%, rgba(8,9,13,0.8) 100%)",
         }}
       />
 

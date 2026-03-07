@@ -284,8 +284,8 @@ export default function NeuralBackground({
         formStrength = formStrength * formStrength;
       }
 
-      // Fade trail — lower = longer trails = more visible
-      ctx.fillStyle = `rgba(8, 9, 13, ${trailOpacity + 0.035})`;
+      // Fade trail
+      ctx.fillStyle = `rgba(8, 9, 13, ${trailOpacity + 0.05})`;
       ctx.fillRect(0, 0, w, h);
 
       const cx = w * 0.5;
@@ -439,11 +439,11 @@ export default function NeuralBackground({
         chainBuckets.get(c)!.push(i);
       }
 
-      const chainDist = 120 + k * 50; // wider connection range
+      const chainDist = 100 + k * 40;
       const chainDistSq = chainDist * chainDist;
       const tierPaths: Array<{ alpha: number; lineWidth: number; segs: Array<[number, number, number, number]> }> = [
+        { alpha: (0.03 + k * 0.03), lineWidth: 0.2 + k * 0.06, segs: [] },
         { alpha: (0.06 + k * 0.05), lineWidth: 0.3 + k * 0.1, segs: [] },
-        { alpha: (0.12 + k * 0.08), lineWidth: 0.5 + k * 0.15, segs: [] },
       ];
 
       for (const [, indices] of chainBuckets) {
@@ -481,11 +481,11 @@ export default function NeuralBackground({
         ctx.stroke();
       }
 
-      // Cross-chain connections
-      const crossDist = 50 + k * 20;
+      // Cross-chain connections — sparse and subtle
+      const crossDist = 40 + k * 15;
       const crossDistSq = crossDist * crossDist;
-      ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.04 + k * 0.04})`;
-      ctx.lineWidth = 0.15 + k * 0.08;
+      ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.02 + k * 0.02})`;
+      ctx.lineWidth = 0.1 + k * 0.05;
       ctx.beginPath();
       for (let i = 0; i < particles.length; i += 6) {
         const pi = particles[i];
@@ -507,28 +507,32 @@ export default function NeuralBackground({
       }
       ctx.stroke();
 
-      // ── Particle dots with glow ─────────────
+      // ── Particle dots with soft glow ─────────────
+      ctx.fillStyle = `rgb(${cr}, ${cg}, ${cb})`;
       for (const p of particles) {
         const { sx, sy, s } = proj(p.x, p.y, p.z);
         const a = pAlpha(p, k);
-        if (a < 0.03) continue;
-        const r = Math.max(0.4, p.size * s * (0.6 + k * 0.4));
-        // Glow halo
-        const glowR = r * 3;
-        const grad = ctx.createRadialGradient(sx, sy, r * 0.3, sx, sy, glowR);
-        grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${a * 0.9})`);
-        grad.addColorStop(0.4, `rgba(${cr}, ${cg}, ${cb}, ${a * 0.25})`);
-        grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(sx, sy, glowR, 0, Math.PI * 2);
-        ctx.fill();
+        if (a < 0.04) continue;
+        const r = Math.max(0.3, p.size * s * (0.5 + k * 0.3));
+        // Soft glow for brighter particles only
+        if (a > 0.3 && r > 0.6) {
+          const glowR = r * 2.5;
+          const grad = ctx.createRadialGradient(sx, sy, r * 0.2, sx, sy, glowR);
+          grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${a * 0.4})`);
+          grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(sx, sy, glowR, 0, Math.PI * 2);
+          ctx.fill();
+        }
         // Core dot
-        ctx.fillStyle = `rgba(${Math.min(255, cr + 60)}, ${Math.min(255, cg + 40)}, ${Math.min(255, cb + 20)}, ${a * 0.95})`;
+        ctx.globalAlpha = a * 0.8;
+        ctx.fillStyle = `rgb(${cr}, ${cg}, ${cb})`;
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.globalAlpha = 1;
 
       // ── Respawn dead particles ──────────────────
       for (let i = 0; i < particles.length; i++) {

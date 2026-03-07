@@ -537,13 +537,13 @@ export default function TestPage() {
       {/* Prismatic burst — immersive shader base */}
       <motion.div
         className="fixed inset-0 z-0"
-        animate={{ opacity: phase === "reporting" ? 0.6 : phase === "swarming" ? 0.5 : 0.35 }}
+        animate={{ opacity: phase === "reporting" ? 0.5 : phase === "swarming" ? 0.4 : 0.3 }}
         transition={{ duration: 2.5 }}
       >
         <PrismaticBurst
           animationType="rotate3d"
-          intensity={phase === "reporting" ? 2.0 : phase === "swarming" ? 1.5 : 1.2}
-          speed={phase === "swarming" ? 0.6 : 0.35}
+          intensity={phase === "reporting" ? 1.5 : phase === "swarming" ? 1.2 : 1.0}
+          speed={phase === "swarming" ? 0.5 : 0.3}
           distort={0}
           paused={false}
           offset={{ x: 0, y: 0 }}
@@ -561,15 +561,15 @@ export default function TestPage() {
       >
         <NeuralBackground
           color="#e8a44a"
-          trailOpacity={0.02}
-          particleCount={500}
-          speed={0.8}
+          trailOpacity={0.015}
+          particleCount={300}
+          speed={0.6}
           intensity={
-            phase === "connecting" ? 0.4 :
-              phase === "crawling" ? 0.6 :
-                phase === "swarming" ? 0.9 :
-                  phase === "reporting" ? 1.0 :
-                    0.5
+            phase === "connecting" ? 0.3 :
+              phase === "crawling" ? 0.45 :
+                phase === "swarming" ? 0.6 :
+                  phase === "reporting" ? 0.7 :
+                    0.35
           }
           orbit={phase === "reporting"}
           formWord={formWord}

@@ -1,4 +1,4 @@
-"""trashmy.tech — Report generator using OpenAI GPT-5.2 with structured JSON.
+"""trashmy.tech — Report generator using OpenAI with structured JSON.
 
 Enhanced with composite scoring system, quick wins analysis, and full
 external-API data injection so the generated report cites concrete numbers.
@@ -19,8 +19,8 @@ log = logging.getLogger("trashmy.report")
 # ---------------------------------------------------------------------------
 # Model strategy — OpenAI GPT-5.2 for everything
 # ---------------------------------------------------------------------------
-REPORT_MODEL = "gpt-5.2"
-ANNOTATION_MODEL = "gpt-5.2"
+REPORT_MODEL = "gpt-4o-mini"
+ANNOTATION_MODEL = "gpt-4o-mini"
 
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated
@@ -426,7 +426,7 @@ async def generate_report(
     composite_scores: dict | None = None,
     quick_wins: list[dict] | None = None,
 ) -> dict:
-    """Generate report using Gemini 2.5 Pro with thinking + structured JSON.
+    """Generate report using LLM with structured JSON output.
 
     Parameters
     ----------
@@ -622,7 +622,7 @@ async def generate_report(
             f"TEST DATA:\n{payload}"
         )
 
-        # GPT-5.2 with structured JSON output — deep reasoning for detailed reports
+        # Structured JSON output for detailed reports
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=REPORT_MODEL,
@@ -780,7 +780,7 @@ def _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations):
 
 
 # ---------------------------------------------------------------------------
-# LLM Fix Prompt Generator — uses GPT-5.2
+# LLM Fix Prompt Generator
 # ---------------------------------------------------------------------------
 
 async def generate_fix_prompt(report: dict, url: str) -> str:
@@ -862,7 +862,7 @@ Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do n
 
     response = await asyncio.to_thread(
         client.chat.completions.create,
-        model="gpt-5.2",
+        model=REPORT_MODEL,
         messages=[
             {"role": "system", "content": "You generate actionable developer prompts for fixing website issues."},
             {"role": "user", "content": prompt},

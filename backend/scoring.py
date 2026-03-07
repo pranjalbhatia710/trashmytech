@@ -933,6 +933,31 @@ def _normalize_external_data(raw: dict) -> dict:
     return ext
 
 
+def _compute_hard_caps(crawl_data: dict, ext: dict) -> list[tuple[float, str]]:
+    """Compute hard score caps for critical security/safety failures.
+
+    Returns a list of (max_score, reason) tuples. The overall score
+    must not exceed any of these caps.
+    """
+    caps: list[tuple[float, str]] = []
+
+    # Safe Browsing flagged = site is actively dangerous
+    sb = ext.get("safe_browsing")
+    if sb is not None and sb != "clean" and sb is not True:
+        caps.append((15.0, "Safe Browsing flagged as malicious"))
+
+    # No SSL at all (site only serves HTTP) or invalid cert
+    url = crawl_data.get("url", "")
+    ssl_data = ext.get("ssl") or {}
+
+    if url.startswith("http://") and not url.startswith("https://"):
+        caps.append((40.0, "Site serves over HTTP without HTTPS"))
+    elif ssl_data and ssl_data.get("valid") is False:
+        caps.append((50.0, "SSL certificate is invalid or expired"))
+
+    return caps
+
+
 def calculate_scores(
     crawl_data: dict,
     agent_results: list[dict],
@@ -989,10 +1014,19 @@ def calculate_scores(
         boost = min(5, total_tool_lims // 5)
         overall = min(100, overall + boost)
 
+    # Apply hard caps for critical failures (Safe Browsing, no HTTPS, invalid SSL)
+    hard_caps = _compute_hard_caps(crawl_data, ext)
+    cap_reasons: list[str] = []
+    for cap_value, cap_reason in hard_caps:
+        if overall > cap_value:
+            overall = cap_value
+            cap_reasons.append(cap_reason)
+
     overall = round(_clamp(overall), 1)
 
-    log.info("Composite score: %.1f (%s) [raw=%.1f, floor=%.1f] | %s",
+    log.info("Composite score: %.1f (%s) [raw=%.1f, floor=%.1f%s] | %s",
              overall, get_letter_grade(overall), raw_overall, ext_floor,
+             f", CAPPED: {'; '.join(cap_reasons)}" if cap_reasons else "",
              ", ".join(f"{c.name}={c.score:.0f}" for c in categories))
 
     return CompositeScore(

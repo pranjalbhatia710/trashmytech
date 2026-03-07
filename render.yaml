@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: trashmytech-api
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: starter
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: HEADLESS
+        value: "true"
+      - key: AGENT_COUNT
+        value: "10"
+      - key: NUM_BROWSERS
+        value: "5"

@@ -218,15 +218,15 @@ function initials(name: string | undefined) {
 }
 
 function scoreColor(score: number) {
-  if (score >= 80) return "var(--status-pass)";
-  if (score >= 65) return "#84cc16";
-  if (score >= 45) return "var(--status-warn)";
+  if (score >= 70) return "var(--status-pass)";
+  if (score >= 55) return "#84cc16";
+  if (score >= 35) return "var(--status-warn)";
   return "var(--status-fail)";
 }
 
 function gradeFromScore(score: number): { letter: string; color: string } {
-  if (score >= 90) return { letter: "A", color: "#22c55e" };
-  if (score >= 80) return { letter: "B", color: "#84cc16" };
+  if (score >= 85) return { letter: "A", color: "#22c55e" };
+  if (score >= 70) return { letter: "B", color: "#84cc16" };
   if (score >= 65) return { letter: "C", color: "#f59e0b" };
   if (score >= 45) return { letter: "D", color: "#f97316" };
   return { letter: "F", color: "#ef4444" };
@@ -486,6 +486,19 @@ export default function TestPage() {
     } else if (p === "swarming" && (msg.type as string) === "log") {
       const level = (msg.level as string) || "info";
       addLog(level as LogEntry["level"], (msg.message as string) || "");
+    } else if (p === "scoring" && status === "complete") {
+      // Capture deterministic scores as soon as they arrive (before full report)
+      const scores = msg.scores as Record<string, unknown> | undefined;
+      if (scores) {
+        setReport((prev) => ({
+          ...prev,
+          score: {
+            overall: (scores.overall_score as number) ?? prev?.score?.overall ?? 0,
+            letter_grade: (scores.letter_grade as string) ?? prev?.score?.letter_grade,
+          },
+        }) as Report);
+        addLog("info", `score: ${scores.overall_score}/100 (${scores.letter_grade})`);
+      }
     } else if (p === "reporting" && status === "started") {
       setPhase("reporting");
       addLog("info", "generating report...");

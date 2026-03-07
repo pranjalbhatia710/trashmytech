@@ -3,10 +3,10 @@
 import { motion } from "framer-motion";
 
 function getGradeFromScore(score: number): { letter: string; color: string; bg: string } {
-  if (score >= 90) return { letter: "A", color: "#22c55e", bg: "rgba(34, 197, 94, 0.1)" };
-  if (score >= 80) return { letter: "B", color: "#84cc16", bg: "rgba(132, 204, 22, 0.1)" };
-  if (score >= 60) return { letter: "C", color: "#f59e0b", bg: "rgba(245, 158, 11, 0.1)" };
-  if (score >= 40) return { letter: "D", color: "#f97316", bg: "rgba(249, 115, 22, 0.1)" };
+  if (score >= 85) return { letter: "A", color: "#22c55e", bg: "rgba(34, 197, 94, 0.1)" };
+  if (score >= 70) return { letter: "B", color: "#84cc16", bg: "rgba(132, 204, 22, 0.1)" };
+  if (score >= 55) return { letter: "C", color: "#f59e0b", bg: "rgba(245, 158, 11, 0.1)" };
+  if (score >= 35) return { letter: "D", color: "#f97316", bg: "rgba(249, 158, 11, 0.1)" };
   return { letter: "F", color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)" };
 }
 

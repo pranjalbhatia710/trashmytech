@@ -19,8 +19,8 @@ log = logging.getLogger("trashmy.report")
 # ---------------------------------------------------------------------------
 # Model strategy — OpenAI GPT-5.2 for everything
 # ---------------------------------------------------------------------------
-REPORT_MODEL = "gpt-4o-mini"
-ANNOTATION_MODEL = "gpt-4o-mini"
+REPORT_MODEL = "gpt-5.2"
+ANNOTATION_MODEL = "gpt-5.2"
 
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated

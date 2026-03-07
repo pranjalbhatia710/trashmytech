@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from openai import OpenAI
 
-ANNOTATION_MODEL = "gpt-4o-mini"
+ANNOTATION_MODEL = "gpt-5.2"
 
 ANNOTATION_PROMPT = """You are a UX auditor annotating a screenshot of a website.
 

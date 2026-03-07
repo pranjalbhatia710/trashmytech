@@ -13,6 +13,10 @@ const NeuralBackground = dynamic(
   () => import("@/components/ui/flow-field-background"),
   { ssr: false }
 );
+const PrismaticBurst = dynamic(
+  () => import("@/components/ui/prismatic-burst"),
+  { ssr: false }
+);
 
 // Fallback demo data (only used if API is unreachable)
 const FALLBACK_RECENT_SITES: RecentSite[] = [
@@ -38,10 +42,10 @@ interface SiteStats {
 }
 
 function getGradeFromScore(score: number): { letter: string; color: string } {
-  if (score >= 90) return { letter: "A", color: "#22c55e" };
-  if (score >= 80) return { letter: "B", color: "#84cc16" };
-  if (score >= 65) return { letter: "C", color: "#f59e0b" };
-  if (score >= 45) return { letter: "D", color: "#f97316" };
+  if (score >= 85) return { letter: "A", color: "#22c55e" };
+  if (score >= 70) return { letter: "B", color: "#84cc16" };
+  if (score >= 55) return { letter: "C", color: "#f59e0b" };
+  if (score >= 35) return { letter: "D", color: "#f97316" };
   return { letter: "F", color: "#ef4444" };
 }
 
@@ -295,9 +299,30 @@ export default function Home() {
     <div className="min-h-screen relative overflow-hidden">
       <TrashAnimation active={trashActive} url={trashUrl} />
 
-      {/* Flow field background */}
+      {/* Prismatic burst shader — deep immersive base layer */}
       <motion.div
         className="fixed inset-0 z-0"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: bgReady ? 0.55 : 0 }}
+        transition={{ duration: 2.5, ease: "easeOut" }}
+      >
+        <PrismaticBurst
+          animationType="rotate3d"
+          intensity={1.4}
+          speed={0.35}
+          distort={0}
+          paused={false}
+          offset={{ x: 0, y: 0 }}
+          hoverDampness={0.25}
+          rayCount={0}
+          mixBlendMode="lighten"
+          colors={["#e8a44a", "#d4781a", "#f0b45a"]}
+        />
+      </motion.div>
+
+      {/* Flow field particles — interactive layer on top */}
+      <motion.div
+        className="fixed inset-0 z-[1]"
         initial={{ opacity: 0 }}
         animate={{ opacity: bgReady ? 1 : 0 }}
         transition={{ duration: 1.8, ease: "easeOut" }}
@@ -306,9 +331,9 @@ export default function Home() {
       </motion.div>
 
       <div
-        className="fixed inset-0 z-[1] pointer-events-none"
+        className="fixed inset-0 z-[2] pointer-events-none"
         style={{
-          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.35) 35%, rgba(10,10,12,0.85) 100%)",
+          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.3) 30%, rgba(8,9,13,0.85) 100%)",
         }}
       />
 

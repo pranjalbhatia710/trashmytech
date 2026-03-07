@@ -58,10 +58,10 @@ function scoreColor(score: number): string {
 }
 
 function gradeFromScore(score: number): { letter: string; color: string } {
-  if (score >= 90) return { letter: "A", color: "#22c55e" };
-  if (score >= 80) return { letter: "B", color: "#84cc16" };
-  if (score >= 60) return { letter: "C", color: "#f59e0b" };
-  if (score >= 40) return { letter: "D", color: "#f97316" };
+  if (score >= 85) return { letter: "A", color: "#22c55e" };
+  if (score >= 70) return { letter: "B", color: "#84cc16" };
+  if (score >= 55) return { letter: "C", color: "#f59e0b" };
+  if (score >= 35) return { letter: "D", color: "#f97316" };
   return { letter: "F", color: "#ef4444" };
 }
 

@@ -481,7 +481,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#08090d; color:#d4d7e0; font-family:'SF Mono',monospace; font-size:12px; padding:20px; }
-  h1 { font-size:14px; color:#3b82f6; margin-bottom:16px; font-weight:600; }
+  h1 { font-size:14px; color:#e8a44a; margin-bottom:16px; font-weight:600; }
   .section { margin-bottom:20px; }
   .label { color:#4a506a; font-size:10px; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px; }
   .stat { display:inline-block; background:#0f1117; border:1px solid #252a3a; border-radius:6px; padding:8px 14px; margin:0 6px 6px 0; }

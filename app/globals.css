@@ -20,10 +20,10 @@
   --text-secondary: #7a8099;
   --text-muted: #4a506a;
 
-  /* Accent - cool electric blue */
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-subtle: rgba(59, 130, 246, 0.1);
+  /* Accent - warm amber */
+  --accent: #e8a44a;
+  --accent-hover: #f0b45a;
+  --accent-subtle: rgba(232, 164, 74, 0.1);
 
   /* Status */
   --status-pass: #22c55e;
@@ -40,7 +40,7 @@
   --cat-ai-seo: #2dd4bf;
 
   /* Legacy compat */
-  --accent-primary: #3b82f6;
+  --accent-primary: #e8a44a;
   --accent-accessibility: #60a5fa;
   --accent-chaos: #a78bfa;
   --accent-demographic: #2dd4bf;
@@ -81,7 +81,7 @@ body {
 }
 
 ::selection {
-  background-color: rgba(59, 130, 246, 0.25);
+  background-color: rgba(232, 164, 74, 0.25);
   color: #fff;
 }
 
@@ -106,7 +106,7 @@ body {
 
 /* ── Focus ring ─────────────────────────────────────── */
 *:focus-visible {
-  outline: 2px solid rgba(59, 130, 246, 0.4);
+  outline: 2px solid rgba(232, 164, 74, 0.4);
   outline-offset: 2px;
 }
 
@@ -159,11 +159,11 @@ body {
 
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    box-shadow: 0 0 0 0 rgba(232, 164, 74, 0);
   }
 
   50% {
-    box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 20px 4px rgba(232, 164, 74, 0.15);
   }
 }
 
@@ -218,7 +218,7 @@ body {
 
 .text-gradient-amber {
   display: inline;
-  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  background: linear-gradient(135deg, #e8a44a 0%, #f0b45a 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -228,7 +228,7 @@ body {
 /* Legacy compat */
 .text-gradient-red {
   display: inline;
-  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  background: linear-gradient(135deg, #e8a44a 0%, #f0b45a 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -236,7 +236,7 @@ body {
 }
 
 .shimmer-bg {
-  background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.04) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(232, 164, 74, 0.04) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s ease-in-out infinite;
 }
@@ -289,7 +289,7 @@ body {
 
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(59, 130, 246, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(232, 164, 74, 0.08);
 }
 
 /* ── Score gauge glow ──────────────────────────────── */
@@ -297,11 +297,11 @@ body {
 
   0%,
   100% {
-    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.15));
+    filter: drop-shadow(0 0 8px rgba(232, 164, 74, 0.15));
   }
 
   50% {
-    filter: drop-shadow(0 0 16px rgba(59, 130, 246, 0.3));
+    filter: drop-shadow(0 0 16px rgba(232, 164, 74, 0.3));
   }
 }
 

@@ -197,9 +197,9 @@ body {
 
 /* ── Utility classes ────────────────────────────────── */
 .glass-card {
-  background: rgba(15, 17, 23, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(12, 13, 19, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border-default);
   border-radius: 8px;
   transition: all 0.35s var(--ease-out-expo);
@@ -210,10 +210,10 @@ body {
 }
 
 .glass-card-hover:hover {
-  background: rgba(24, 27, 37, 0.95);
+  background: rgba(20, 22, 32, 0.98);
   border-color: var(--border-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
 .text-gradient-amber {

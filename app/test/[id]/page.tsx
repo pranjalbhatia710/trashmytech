@@ -537,12 +537,12 @@ export default function TestPage() {
       {/* Prismatic burst — immersive shader base */}
       <motion.div
         className="fixed inset-0 z-0"
-        animate={{ opacity: phase === "reporting" ? 0.9 : phase === "swarming" ? 0.7 : 0.5 }}
+        animate={{ opacity: phase === "reporting" ? 0.6 : phase === "swarming" ? 0.5 : 0.35 }}
         transition={{ duration: 2.5 }}
       >
         <PrismaticBurst
           animationType="rotate3d"
-          intensity={phase === "reporting" ? 2.5 : phase === "swarming" ? 1.8 : 1.4}
+          intensity={phase === "reporting" ? 2.0 : phase === "swarming" ? 1.5 : 1.2}
           speed={phase === "swarming" ? 0.6 : 0.35}
           distort={0}
           paused={false}
@@ -592,9 +592,9 @@ export default function TestPage() {
       <header
         className="sticky top-0 z-50 px-4 sm:px-8 py-3.5 flex items-center justify-between relative"
         style={{
-          backgroundColor: "rgba(10,10,12,0.88)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
+          backgroundColor: "rgba(8,9,13,0.95)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
           borderBottom: "1px solid rgba(28,28,32, 0.5)",
         }}
       >
@@ -652,7 +652,7 @@ export default function TestPage() {
         </div>
       </header>
 
-      <main className="px-4 sm:px-6 py-6 relative z-10">
+      <main className="px-4 sm:px-6 py-6 relative z-10" style={{ backgroundColor: "rgba(8,9,13,0.75)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
         {/* URL banner */}
         <div className="max-w-[760px] mx-auto mb-6">
           <div

@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Image from "next/image";
-import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { API_URL, WS_URL } from "@/lib/config";
@@ -13,7 +11,7 @@ const NeuralBackground = dynamic(
   { ssr: false }
 );
 import { useScene } from "@/components/three/SceneContext";
-import { ImmersiveBackdrop } from "@/components/ui/immersive-backdrop";
+import CounterLoader from "@/components/ui/counter-loader";
 import { LiveBrowserViewer } from "@/components/ui/live-browser-viewer";
 import { ScoreGauge } from "@/components/ui/score-gauge";
 import { SeverityBadge } from "@/components/ui/severity-badge";
@@ -25,9 +23,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Shield, Eye, Gauge, Users, AlertTriangle, Bot, Check, X,
+  Shield, Eye, Smartphone, Gauge, Users, AlertTriangle, Bot, Check, X,
   CheckCircle2, XCircle, ChevronDown, ExternalLink, Copy, Sparkles,
-  BarChart3, Zap, TrendingUp, FileText,
+  ArrowRight, BarChart3, Zap, TrendingUp, FileText,
 } from "lucide-react";
 import { DEMO_AGENTS, DEMO_REPORT, DEMO_CRAWL_DATA, DEMO_LOGS, DEMO_URL } from "@/lib/demo-data";
 
@@ -224,6 +222,14 @@ function scoreColor(score: number) {
   if (score >= 65) return "#84cc16";
   if (score >= 45) return "var(--status-warn)";
   return "var(--status-fail)";
+}
+
+function gradeFromScore(score: number): { letter: string; color: string } {
+  if (score >= 90) return { letter: "A", color: "#22c55e" };
+  if (score >= 80) return { letter: "B", color: "#84cc16" };
+  if (score >= 65) return { letter: "C", color: "#f59e0b" };
+  if (score >= 45) return { letter: "D", color: "#f97316" };
+  return { letter: "F", color: "#ef4444" };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -507,100 +513,122 @@ export default function TestPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const grade = gradeFromScore(report?.score?.overall ?? 0);
+
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ backgroundColor: "var(--bg-base)" }}>
+    <div className="min-h-screen relative" style={{ backgroundColor: "var(--bg-base)" }}>
+      {/* Background */}
       <motion.div
         className="fixed inset-0 z-0"
-        animate={{ opacity: phase === "done" ? 0.18 : 0.28 }}
-        transition={{ duration: 0.35 }}
+        animate={{ opacity: phase === "reporting" ? 0.85 : phase === "swarming" ? 0.6 : 0.5 }}
+        transition={{ duration: 2 }}
       >
         <NeuralBackground
           color="#e8a44a"
-          trailOpacity={0.02}
-          particleCount={240}
-          speed={0.6}
+          trailOpacity={0.03}
+          particleCount={600}
+          speed={0.8}
           intensity={
-            phase === "connecting" ? 0.18 :
-              phase === "crawling" ? 0.26 :
-                phase === "swarming" ? 0.4 :
-                  phase === "reporting" ? 0.55 :
-                    0.22
+            phase === "connecting" ? 0.3 :
+              phase === "crawling" ? 0.5 :
+                phase === "swarming" ? 0.8 :
+                  phase === "reporting" ? 1.0 :
+                    0.4
           }
           orbit={phase === "reporting"}
           formWord={formWord}
           holdWord={phase !== "done"}
         />
       </motion.div>
-      <ImmersiveBackdrop variant="report" />
+      <motion.div
+        className="fixed inset-0 z-[1] pointer-events-none"
+        animate={{
+          background: phase === "reporting"
+            ? "radial-gradient(ellipse at 50% 45%, transparent 0%, rgba(10,10,12,0.05) 40%, rgba(10,10,12,0.4) 100%)"
+            : phase === "swarming"
+              ? "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.15) 45%, rgba(10,10,12,0.65) 100%)"
+              : "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.2) 45%, rgba(10,10,12,0.7) 100%)",
+        }}
+        transition={{ duration: 2 }}
+      />
 
+      {/* Header */}
       <header
-        className="sticky top-0 z-50 border-b"
+        className="sticky top-0 z-50 px-4 sm:px-8 py-3.5 flex items-center justify-between relative"
         style={{
-          backgroundColor: "rgba(13,15,18,0.96)",
-          borderColor: "var(--border-default)",
+          backgroundColor: "rgba(10,10,12,0.88)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          borderBottom: "1px solid rgba(28,28,32, 0.5)",
         }}
       >
-        <div className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <Link
-            href="/"
-            className="text-[15px] font-semibold tracking-tight no-underline"
-            style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
-          >
-            trashmy.tech
-          </Link>
+        <a
+          href="/"
+          className="flex items-center gap-2 text-[13px] font-bold tracking-tight transition-colors duration-200"
+          style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)", textDecoration: "none" }}
+        >
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 8px rgba(232,164,74,0.4)" }} />
+          trashmy.tech
+        </a>
 
-          <div className="flex items-center gap-2 text-[11px]" style={{ fontFamily: "var(--font-mono)" }}>
-            {issueCount > 0 ? (
-              <div
-                className="depth-pill px-2 py-1"
-                style={{ color: "var(--status-fail)", borderColor: "rgba(210,97,93,0.35)" }}
-              >
-                <AlertTriangle size={11} />
-                {issueCount} issues
-              </div>
-            ) : null}
-
-            <div
-              className="depth-pill px-2 py-1"
-              style={{
-                color: phase === "done" ? "var(--status-pass)" : "var(--accent)",
-                borderColor: phase === "done" ? "rgba(105,183,121,0.35)" : "var(--accent-border)",
-              }}
+        <div className="flex items-center gap-3">
+          {/* Running issue counter */}
+          {issueCount > 0 && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md"
+              style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}
             >
-              {phase === "connecting" ? "connecting" : phase === "crawling" ? "scanning" : phase === "swarming" ? "testing" : phase === "reporting" ? "analyzing" : "complete"}
-            </div>
+              <AlertTriangle size={10} style={{ color: "var(--status-fail)" }} />
+              <span className="text-[11px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>
+                {issueCount}
+              </span>
+              <span className="text-[9px]" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)", opacity: 0.7 }}>issues</span>
+            </motion.div>
+          )}
 
-            <span className="px-2 py-1" style={{ color: "var(--text-muted)" }}>
-              {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}
-            </span>
-          </div>
+          {/* Phase badge */}
+          {phase !== "done" ? (
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-full"
+              style={{ backgroundColor: "rgba(232,164,74, 0.08)", border: "1px solid rgba(232,164,74, 0.15)" }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px rgba(232,164,74,0.5)" }} />
+              <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
+                {phase === "connecting" ? "Connecting" : phase === "crawling" ? "Scanning" : phase === "swarming" ? "Testing" : "Analyzing"}
+              </span>
+            </div>
+          ) : (
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-full"
+              style={{ backgroundColor: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.15)" }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "var(--status-pass)" }} />
+              <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)" }}>Complete</span>
+            </div>
+          )}
+
+          {/* Timer */}
+          <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+            {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}
+          </span>
         </div>
       </header>
 
       <main className="px-4 sm:px-6 py-6 relative z-10">
+        {/* URL banner */}
         <div className="max-w-[760px] mx-auto mb-6">
-          <div className="focus-shell focus-shell-report px-4 py-4 sm:px-5 sm:py-5">
-            <div
-              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 text-[12px]"
-              style={{ fontFamily: "var(--font-mono)" }}
-            >
-              <span
-                className="text-[11px] uppercase tracking-[0.14em]"
-                style={{ color: "var(--text-muted)" }}
-              >
-                target
-              </span>
-              <a
-                href={testUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-w-0 flex-1 truncate no-underline hover:underline"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {testUrl}
-              </a>
-              <ExternalLink size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-            </div>
+          <div
+            className="glass-card flex items-center gap-3 px-4 py-2.5 text-[12px]"
+            style={{ borderRadius: "10px", fontFamily: "var(--font-mono)" }}
+          >
+            <span className="font-semibold uppercase text-[10px] tracking-[1px]" style={{ color: "var(--accent)" }}>target</span>
+            <div className="w-px h-3" style={{ backgroundColor: "var(--border-default)" }} />
+            <a href={testUrl} target="_blank" rel="noopener noreferrer" className="hover:underline truncate flex-1 transition-colors" style={{ color: "var(--text-secondary)" }}>
+              {testUrl}
+            </a>
+            <ExternalLink size={11} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
           </div>
         </div>
 
@@ -611,113 +639,112 @@ export default function TestPage() {
             animate={{ opacity: 1 }}
             className="max-w-[760px] mx-auto"
           >
-            <div className="focus-shell focus-shell-report px-4 py-5 sm:px-5 sm:py-6">
-              {/* Crawl intel */}
-              {crawlData && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-6"
-                >
-                  <div className="flex items-baseline justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      {crawlData.page_title && (
-                        <h2 className="text-[16px] font-semibold truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                          {crawlData.page_title.replace(/[\u{1F300}-\u{1FAD6}\u{1FA70}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, "").trim()}
-                        </h2>
-                      )}
-                    </div>
-                    <div className="flex items-baseline gap-1.5 shrink-0 ml-4">
-                      <span className="text-[20px] font-bold tabular-nums leading-none" style={{ fontFamily: "var(--font-mono)", color: (crawlData.load_time_ms || 0) > 3000 ? "var(--status-warn)" : "var(--text-primary)" }}>
-                        {((crawlData.load_time_ms || 0) / 1000).toFixed(1)}s
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {[
-                      { val: crawlData.links_count || 0, label: "links" },
-                      { val: crawlData.forms_count || 0, label: "forms" },
-                      { val: crawlData.buttons_count || 0, label: "buttons" },
-                    ].map((s) => (
-                      <div key={s.label} className="depth-pill flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
-                        <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{s.val}</span>
-                        <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{s.label}</span>
-                      </div>
-                    ))}
-                    {(crawlData.accessibility_violations_count || 0) > 0 && (
-                      <motion.div
-                        initial={{ scale: 0.8 }}
-                        animate={{ scale: 1 }}
-                        className="depth-pill flex items-center gap-1.5 px-2.5 py-1 rounded-md"
-                        style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}
-                      >
-                        <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>{crawlData.accessibility_violations_count}</span>
-                        <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--status-fail)", opacity: 0.7 }}>violations</span>
-                      </motion.div>
+            {/* Crawl intel */}
+            {crawlData && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6"
+              >
+                <div className="flex items-baseline justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    {crawlData.page_title && (
+                      <h2 className="text-[16px] font-semibold truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                        {crawlData.page_title.replace(/[\u{1F300}-\u{1FAD6}\u{1FA70}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, "").trim()}
+                      </h2>
                     )}
                   </div>
-                </motion.div>
-              )}
-
-              {/* Progress bar */}
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                    {phase === "connecting" ? "Connecting..." : phase === "crawling" ? "Scanning site..." : phase === "reporting" ? "Writing report..." : `${sortedAgents.filter(a => a.status === "running").length} agents active`}
-                  </span>
-                  <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
-                    {doneCount}/{totalAgents}
-                  </span>
-                </div>
-                <div className="depth-track h-[6px] rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
-                  <motion.div
-                    className="h-full rounded-full"
-                    style={{ backgroundColor: "var(--accent)", boxShadow: "0 8px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.22)" }}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(doneCount / totalAgents) * 100}%` }}
-                    transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                  />
-                </div>
-              </div>
-
-              {/* Live Browser Viewer - crawling */}
-              {phase === "crawling" && (
-                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                  <LiveBrowserViewer
-                    screenshot={crawlScreenshot ?? undefined}
-                    agentName="Crawler"
-                    step={crawlStep || undefined}
-                    url={testUrl}
-                    showEmbed={!crawlScreenshot}
-                  />
-                </motion.div>
-              )}
-
-              {/* Live Browser Viewer - swarming */}
-              {phase === "swarming" && selectedAgent && (
-                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)" }} />
-                      <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>
-                        Watching <strong style={{ color: "var(--text-primary)" }}>{selectedAgent.name}</strong>
-                      </span>
-                    </div>
-                    <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                      step {liveScreenshots.get(selectedAgent.id)?.step || 0}
+                  <div className="flex items-baseline gap-1.5 shrink-0 ml-4">
+                    <span className="text-[20px] font-bold tabular-nums leading-none" style={{ fontFamily: "var(--font-mono)", color: (crawlData.load_time_ms || 0) > 3000 ? "var(--status-warn)" : "var(--text-primary)" }}>
+                      {((crawlData.load_time_ms || 0) / 1000).toFixed(1)}s
                     </span>
                   </div>
-                  <LiveBrowserViewer
-                    screenshot={liveScreenshots.get(selectedAgent.id)?.b64}
-                    fallbackScreenshot={crawlScreenshot ?? undefined}
-                    agentName={selectedAgent.name}
-                    step={liveScreenshots.get(selectedAgent.id)?.step}
-                    url={testUrl}
-                    annotated={annotatedScreenshots.has(selectedAgent.id)}
-                  />
-                </motion.div>
-              )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { val: crawlData.links_count || 0, label: "links" },
+                    { val: crawlData.forms_count || 0, label: "forms" },
+                    { val: crawlData.buttons_count || 0, label: "buttons" },
+                  ].map((s) => (
+                    <div key={s.label} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+                      <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{s.val}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{s.label}</span>
+                    </div>
+                  ))}
+                  {(crawlData.accessibility_violations_count || 0) > 0 && (
+                    <motion.div
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: 1 }}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md"
+                      style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}
+                    >
+                      <span className="text-[12px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>{crawlData.accessibility_violations_count}</span>
+                      <span className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--status-fail)", opacity: 0.7 }}>violations</span>
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Progress bar */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                  {phase === "connecting" ? "Connecting..." : phase === "crawling" ? "Scanning site..." : phase === "reporting" ? "Writing report..." : `${sortedAgents.filter(a => a.status === "running").length} agents active`}
+                </span>
+                <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
+                  {doneCount}/{totalAgents}
+                </span>
+              </div>
+              <div className="h-[3px] rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: "var(--accent)" }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(doneCount / totalAgents) * 100}%` }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                />
+              </div>
+            </div>
+
+            {/* Live Browser Viewer - crawling */}
+            {phase === "crawling" && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+                <LiveBrowserViewer
+                  screenshot={crawlScreenshot ?? undefined}
+                  agentName="Crawler"
+                  step={crawlStep || undefined}
+                  url={testUrl}
+                  showEmbed={!crawlScreenshot}
+                />
+              </motion.div>
+            )}
+
+            {/* Live Browser Viewer - swarming */}
+            {phase === "swarming" && selectedAgent && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)" }} />
+                    <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>
+                      Watching <strong style={{ color: "var(--text-primary)" }}>{selectedAgent.name}</strong>
+                    </span>
+                  </div>
+                  <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                    step {liveScreenshots.get(selectedAgent.id)?.step || 0}
+                  </span>
+                </div>
+                <LiveBrowserViewer
+                  screenshot={liveScreenshots.get(selectedAgent.id)?.b64}
+                  fallbackScreenshot={crawlScreenshot ?? undefined}
+                  agentName={selectedAgent.name}
+                  step={liveScreenshots.get(selectedAgent.id)?.step}
+                  url={testUrl}
+                  annotated={annotatedScreenshots.has(selectedAgent.id)}
+                />
+              </motion.div>
+            )}
 
             {/* Agent grid - enhanced with red pulse for critical findings */}
             {(phase === "swarming" || phase === "crawling") && sortedAgents.length > 0 && (
@@ -753,23 +780,14 @@ export default function TestPage() {
                             duration: 0.3,
                             boxShadow: hasCriticalFinding ? { repeat: 2, duration: 1.5 } : undefined,
                           }}
-                          whileHover={{
-                            y: -6,
-                            scale: 1.012,
-                            rotateX: 8,
-                            rotateY: idx % 2 === 0 ? -8 : 8,
-                          }}
-                          whileTap={{ scale: 0.995 }}
                           onClick={() => setSelectedAgentId(agent.id)}
-                          className="depth-panel depth-panel-hover group cursor-pointer relative overflow-hidden rounded-xl px-3 py-2.5 transition-all duration-200"
+                          className="group cursor-pointer relative overflow-hidden rounded-lg px-3 py-2.5 transition-all duration-200"
                           style={{
                             backgroundColor: selectedAgentId === agent.id ? "rgba(232,164,74,0.06)" : "var(--bg-surface)",
                             border: `1px solid ${agent.status === "blocked" ? "rgba(248,113,113,0.25)" :
                                 selectedAgentId === agent.id ? "rgba(232,164,74,0.2)" :
                                   "var(--border-default)"
                               }`,
-                            transformPerspective: 1350,
-                            transformStyle: "preserve-3d",
                           }}
                         >
                           <div className="flex items-center gap-2 mb-1.5">
@@ -780,7 +798,6 @@ export default function TestPage() {
                                 color: catColor(agent.category),
                                 fontFamily: "var(--font-display)",
                                 border: `1px solid ${catColor(agent.category)}25`,
-                                transform: "translateZ(18px)",
                               }}
                             >
                               {initials(agent.name)}
@@ -848,7 +865,7 @@ export default function TestPage() {
                   exit={{ opacity: 0, height: 0 }}
                   className="mb-6 overflow-hidden"
                 >
-                  <div className="depth-panel depth-panel-accent overflow-hidden rounded-[22px]" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid rgba(232,164,74,0.12)" }}>
+                  <div className="overflow-hidden rounded-xl" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid rgba(232,164,74,0.12)" }}>
                     <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-default)" }}>
                       <div
                         className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
@@ -864,7 +881,7 @@ export default function TestPage() {
                           {selectedAgent.description}
                         </div>
                       </div>
-                      <button onClick={() => setSelectedAgentId(null)} className="depth-button text-[10px] px-2 py-1 rounded-lg cursor-pointer" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", backgroundColor: "var(--bg-elevated)" }}>
+                      <button onClick={() => setSelectedAgentId(null)} className="text-[10px] px-2 py-1 rounded cursor-pointer" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", backgroundColor: "var(--bg-elevated)" }}>
                         close
                       </button>
                     </div>
@@ -933,7 +950,7 @@ export default function TestPage() {
             </AnimatePresence>
 
             {/* Event log */}
-            <div ref={logRef} className="depth-panel p-3 max-h-32 overflow-y-auto rounded-xl mb-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+            <div ref={logRef} className="p-3 max-h-32 overflow-y-auto rounded-lg mb-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
               {logs.slice(0, 40).map((log, i) => (
                 <div key={i} className="flex gap-2 mb-0.5 leading-relaxed text-[10px]">
                   <span className="shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{log.time}</span>
@@ -1031,8 +1048,7 @@ export default function TestPage() {
                   {doneCount} agents &middot; {issueCount} issues
                 </motion.div>
               </motion.div>
-              )}
-            </div>
+            )}
           </motion.div>
         )}
 
@@ -1044,7 +1060,6 @@ export default function TestPage() {
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
             className="max-w-[960px] mx-auto mt-4 pb-16"
           >
-            <div className="focus-shell focus-shell-report px-4 py-6 sm:px-7 sm:py-7">
             {/* Score Hero - with animated gauge */}
             <div className="mb-12">
               <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-8 items-center">
@@ -1077,7 +1092,7 @@ export default function TestPage() {
                 {report.fix_prompt && (
                   <button
                     onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
-                    className="depth-button depth-button-accent flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-all cursor-pointer"
+                    className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
                     style={{
                       fontFamily: "var(--font-display)",
                       backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
@@ -1091,27 +1106,27 @@ export default function TestPage() {
                 )}
                 <button
                   onClick={handleCopy}
-                  className="depth-button flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-colors cursor-pointer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
                   style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
                 >
                   <Copy size={11} />
                   {copied ? "Copied" : "Share link"}
                 </button>
-                <Link
+                <a
                   href={`/compare?url1=${encodeURIComponent(testUrl)}`}
-                  className="depth-button flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-colors no-underline cursor-pointer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline cursor-pointer"
                   style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
                 >
                   <BarChart3 size={11} />
                   Compare with...
-                </Link>
-                <Link
+                </a>
+                <a
                   href="/"
-                  className="depth-button flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-colors no-underline ml-auto"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"
                   style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
                 >
                   Test another site
-                </Link>
+                </a>
               </div>
             </div>
 
@@ -1178,7 +1193,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <p className="text-[15px] leading-[1.8] pl-4" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)", borderLeft: "2px solid var(--accent)" }}>
                   {report.narrative.executive_summary}
                 </p>
@@ -1193,7 +1208,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
                   <Users size={13} style={{ color: "var(--text-muted)" }} />
                   <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Who Can&apos;t Use Your Site</span>
@@ -1271,7 +1286,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-6" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Deep Analysis</div>
                 <div className="space-y-4">
                   {report.narrative?.form_analysis && (
@@ -1377,7 +1392,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2">
                     <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
@@ -1425,7 +1440,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Persona Stories</div>
                 <div className="space-y-3">
                   {report.narrative.persona_verdicts.map((v: PersonaVerdict, i: number) => {
@@ -1608,20 +1623,11 @@ export default function TestPage() {
                                       return (
                                         <div
                                           key={j}
-                                          className="relative flex-1 overflow-hidden rounded cursor-pointer transition-opacity hover:opacity-80"
+                                          className="flex-1 rounded overflow-hidden cursor-pointer transition-opacity hover:opacity-80"
                                           style={{ border: "1px solid var(--border-default)" }}
                                           onClick={() => setLightboxImg(src)}
                                         >
-                                          <div className="relative aspect-[16/10] w-full">
-                                            <Image
-                                              src={src}
-                                              alt={`Step ${ss.step}`}
-                                              fill
-                                              unoptimized
-                                              sizes="(max-width: 768px) 100vw, 33vw"
-                                              className="object-cover object-top"
-                                            />
-                                          </div>
+                                          <img src={src} alt={`Step ${ss.step}`} className="w-full aspect-[16/10] object-cover object-top" />
                                         </div>
                                       );
                                     })}
@@ -1646,7 +1652,7 @@ export default function TestPage() {
                 viewport={{ once: true }}
                 className="mb-14"
               >
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                   {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
                     <div>
@@ -1687,7 +1693,7 @@ export default function TestPage() {
             {/* Accessibility Audit */}
             {report.narrative?.accessibility_audit && (report.narrative.accessibility_audit.total_violations || 0) > 0 && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
                   <Eye size={14} style={{ color: "var(--cat-accessibility)" }} />
                   <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Accessibility Audit</span>
@@ -1727,7 +1733,7 @@ export default function TestPage() {
             {/* Chaos/Security Test Summary */}
             {report.narrative?.chaos_test_summary && (report.narrative.chaos_test_summary.inputs_tested || 0) > 0 && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
                   <Shield size={14} style={{ color: "var(--cat-security)" }} />
                   <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Security / Chaos Testing</span>
@@ -1761,7 +1767,7 @@ export default function TestPage() {
             {/* Deterministic Quick Wins from scoring engine */}
             {report.quick_wins && report.quick_wins.length > 0 && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
                   <Zap size={13} style={{ color: "var(--accent)" }} />
                   <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Quick Wins</span>
@@ -1815,7 +1821,7 @@ export default function TestPage() {
             {/* Recommendations */}
             {report.narrative?.recommendations && report.narrative.recommendations.length > 0 && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="depth-divider h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
                   <TrendingUp size={13} style={{ color: "var(--accent)" }} />
                   <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Recommendations</span>
@@ -1866,30 +1872,23 @@ export default function TestPage() {
             {(report.annotated_screenshot_url || report.annotated_screenshot_b64) && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
                 <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Annotated Screenshot</div>
-                <div
-                  className="cursor-pointer overflow-hidden rounded-lg transition-opacity hover:opacity-90"
+                <img
+                  src={report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url ? `${API_URL}${report.annotated_screenshot_url}` : ""}
+                  alt="Annotated screenshot"
+                  className="w-full rounded-lg cursor-pointer transition-opacity hover:opacity-90"
                   style={{ border: "1px solid var(--border-default)" }}
                   onClick={() => setLightboxImg(report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url ? `${API_URL}${report.annotated_screenshot_url}` : null)}
-                >
-                  <Image
-                    src={report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url ? `${API_URL}${report.annotated_screenshot_url}` : ""}
-                    alt="Annotated screenshot"
-                    width={1600}
-                    height={1000}
-                    unoptimized
-                    className="h-auto w-full"
-                  />
-                </div>
+                />
               </motion.div>
             )}
 
             {/* Bottom Action Bar */}
-            <div className="depth-divider h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+            <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
             <div className="flex items-center gap-3 flex-wrap">
               {report.fix_prompt && (
                 <button
                   onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
-                  className="depth-button depth-button-accent flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-all cursor-pointer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
                   style={{
                     fontFamily: "var(--font-display)",
                     backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
@@ -1903,24 +1902,23 @@ export default function TestPage() {
               )}
               <button
                 onClick={handleCopy}
-                className="depth-button flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-colors cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
                 style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
               >
                 <Copy size={11} />
                 {copied ? "Copied" : "Share"}
               </button>
-                <Link
-                  href="/"
-                  className="depth-button flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-medium transition-colors no-underline ml-auto"
-                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
-                >
-                  Test another site
-                </Link>
-	            </div>
-
+              <a
+                href="/"
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
+              >
+                Test another site
+              </a>
             </div>
-	          </motion.div>
-	        )}
+
+          </motion.div>
+        )}
       </main>
 
       {/* Lightbox */}

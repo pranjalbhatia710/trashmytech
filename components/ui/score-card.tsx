@@ -71,27 +71,16 @@ export const ScoreCard = React.forwardRef<HTMLDivElement, ScoreCardProps>(
     return (
       <div
         ref={ref}
-        className={cn("glass-card depth-panel depth-panel-strong w-full rounded-[20px] p-5", className)}
+        className={cn("w-full rounded-lg p-5", className)}
         style={{
-          backgroundColor: "#0f141b",
-          border: "1px solid rgba(124, 137, 168, 0.18)",
+          backgroundColor: "#0f1117",
+          border: "1px solid #252a3a",
         }}
         {...props}
       >
         {/* Header */}
         <div className="mb-4 flex items-center gap-2.5">
-          {headerIcon && (
-            <div
-              className="depth-pill flex h-8 w-8 items-center justify-center rounded-xl"
-              style={{
-                color: "#ef4444",
-                backgroundColor: "rgba(239,68,68,0.08)",
-                border: "1px solid rgba(239,68,68,0.14)",
-              }}
-            >
-              {headerIcon}
-            </div>
-          )}
+          {headerIcon && <div style={{ color: "#ef4444" }}>{headerIcon}</div>}
           <h2 className="font-mono text-[12px] uppercase tracking-[1.5px]" style={{ color: "#7a8099" }}>
             {title}
           </h2>
@@ -100,14 +89,7 @@ export const ScoreCard = React.forwardRef<HTMLDivElement, ScoreCardProps>(
         {/* Stats */}
         <div className="mb-5 grid grid-cols-3 gap-3 text-center">
           {stats.map((item, i) => (
-            <div
-              key={i}
-              className="depth-panel rounded-2xl px-3 py-3"
-              style={{
-                backgroundColor: "rgba(255,255,255,0.025)",
-                border: "1px solid rgba(124, 137, 168, 0.14)",
-              }}
-            >
+            <div key={i}>
               <div className="flex items-center justify-center gap-1">
                 <p className="font-mono text-[22px] font-bold" style={{ color: "#d4d7e0" }}>
                   {item.value}
@@ -138,13 +120,7 @@ export const ScoreCard = React.forwardRef<HTMLDivElement, ScoreCardProps>(
         {/* Animated Graph */}
         {graphData && (
           <TooltipProvider delayDuration={100}>
-            <div
-              className="depth-panel depth-panel-cool rounded-[18px] p-3"
-              style={{
-                backgroundColor: "#151a22",
-                border: "1px solid rgba(124, 137, 168, 0.12)",
-              }}
-            >
+            <div className="rounded-md p-3" style={{ backgroundColor: "#181b25" }}>
               <motion.div
                 className="flex w-full items-end justify-between gap-1.5"
                 variants={containerVariants}
@@ -156,31 +132,21 @@ export const ScoreCard = React.forwardRef<HTMLDivElement, ScoreCardProps>(
                   <Tooltip key={i}>
                     <TooltipTrigger asChild>
                       <motion.div
-                        className="relative flex-1 cursor-pointer overflow-hidden rounded-[10px]"
+                        className="flex-1 rounded-sm cursor-pointer"
                         style={{
                           height: `${bar.value}%`,
-                          background: bar.color || "#ef4444",
-                          boxShadow: "0 10px 18px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -8px 14px rgba(0,0,0,0.24)",
+                          background: `linear-gradient(180deg, ${bar.color || "#ef4444"} 0%, ${bar.color || "#ef4444"}88 100%)`,
                           originY: 1,
                         }}
                         variants={barVariants}
                         whileHover={{
                           scale: 1.08,
                           y: -4,
-                          boxShadow: "0 16px 24px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.26), inset 0 -8px 14px rgba(0,0,0,0.24)",
+                          boxShadow: `0 8px 20px ${bar.color || "#ef4444"}33`,
                           transition: { type: "spring", stiffness: 200, damping: 10 },
                         }}
                         whileTap={{ scale: 0.95 }}
-                      >
-                        <span
-                          className="absolute inset-x-[10%] top-0 h-[36%] rounded-full"
-                          style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0))" }}
-                        />
-                        <span
-                          className="absolute inset-y-[18%] left-[18%] right-[18%] rounded-full blur-md"
-                          style={{ backgroundColor: bar.color || "#ef4444", opacity: 0.35 }}
-                        />
-                      </motion.div>
+                      />
                     </TooltipTrigger>
                     <TooltipContent className="text-xs font-mono">
                       <p className="font-semibold" style={{ color: "#d4d7e0" }}>{bar.label}</p>
@@ -204,14 +170,7 @@ export const ScoreCard = React.forwardRef<HTMLDivElement, ScoreCardProps>(
             </h4>
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               {graphData.map((item, i) => (
-                <div
-                  key={i}
-                  className="depth-pill flex items-center gap-1.5 rounded-full px-2 py-1"
-                  style={{
-                    backgroundColor: "rgba(255,255,255,0.025)",
-                    border: "1px solid rgba(124, 137, 168, 0.12)",
-                  }}
-                >
+                <div key={i} className="flex items-center gap-1.5">
                   <span
                     className="h-1.5 w-1.5 rounded-full"
                     style={{ backgroundColor: item.color || "#ef4444" }}

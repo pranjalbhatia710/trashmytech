@@ -1,6 +1,5 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { motion } from "framer-motion";
 
 interface AnimatedBarProps {
@@ -12,7 +11,6 @@ interface AnimatedBarProps {
   showValue?: boolean;
   delay?: number;
   className?: string;
-  align?: "start" | "end";
 }
 
 export function AnimatedBar({
@@ -24,10 +22,8 @@ export function AnimatedBar({
   showValue = true,
   delay = 0,
   className = "",
-  align = "start",
 }: AnimatedBarProps) {
   const percentage = Math.min((value / maxValue) * 100, 100);
-  const barStyle: CSSProperties = { backgroundColor: color };
 
   return (
     <div className={className}>
@@ -58,16 +54,15 @@ export function AnimatedBar({
         </div>
       )}
       <div
-        className="depth-track rounded-full"
+        className="rounded-full overflow-hidden"
         style={{
           height,
-          backgroundColor: "var(--bg-elevated)",
-          border: "1px solid var(--border-default)",
+          backgroundColor: "rgba(255,255,255,0.04)",
         }}
       >
         <motion.div
-          className={`relative h-full rounded-full ${align === "end" ? "ml-auto" : ""}`}
-          style={barStyle}
+          className="h-full rounded-full"
+          style={{ backgroundColor: color }}
           initial={{ width: 0 }}
           animate={{ width: `${percentage}%` }}
           transition={{

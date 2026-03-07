@@ -23,21 +23,12 @@ export function StatsCard({ title, stats, accentColor = "#ef4444", className = "
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`glass-card depth-panel depth-panel-strong overflow-hidden ${className}`}
-      style={{ borderRadius: "18px" }}
+      className={`glass-card overflow-hidden ${className}`}
+      style={{ borderRadius: "14px" }}
     >
       {/* Header with accent stripe */}
-      <div className="px-5 pt-4 pb-3 flex items-center gap-3" style={{ borderBottom: "1px solid rgba(124, 137, 168, 0.16)" }}>
-        <div
-          className="depth-pill flex h-7 w-7 items-center justify-center rounded-xl"
-          style={{
-            backgroundColor: `${accentColor}14`,
-            border: `1px solid ${accentColor}20`,
-            boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
-          }}
-        >
-          <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: accentColor }} />
-        </div>
+      <div className="px-5 pt-4 pb-3 flex items-center gap-3" style={{ borderBottom: "1px solid rgba(30, 34, 50, 0.4)" }}>
+        <div className="w-1 h-4 rounded-full" style={{ backgroundColor: accentColor }} />
         <span className="font-mono text-[10px] uppercase tracking-[2px] font-semibold" style={{ color: "#8b90a7" }}>
           {title}
         </span>
@@ -48,10 +39,9 @@ export function StatsCard({ title, stats, accentColor = "#ef4444", className = "
         {stats.map((stat, i) => (
           <div
             key={i}
-            className="depth-panel px-5 py-4 relative"
+            className="px-5 py-4 relative"
             style={{
-              backgroundColor: "rgba(255,255,255,0.02)",
-              borderRight: i < stats.length - 1 ? "1px solid rgba(124, 137, 168, 0.12)" : "none",
+              borderRight: i < stats.length - 1 ? "1px solid rgba(30, 34, 50, 0.3)" : "none",
             }}
           >
             {stat.icon && (

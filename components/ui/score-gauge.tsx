@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 
 function getGradeFromScore(score: number): { letter: string; color: string } {
-  if (score >= 85) return { letter: "A", color: "#22c55e" };
-  if (score >= 70) return { letter: "B", color: "#84cc16" };
-  if (score >= 55) return { letter: "C", color: "#f59e0b" };
-  if (score >= 35) return { letter: "D", color: "#f97316" };
+  if (score >= 90) return { letter: "A", color: "#22c55e" };
+  if (score >= 80) return { letter: "B", color: "#84cc16" };
+  if (score >= 60) return { letter: "C", color: "#f59e0b" };
+  if (score >= 40) return { letter: "D", color: "#f97316" };
   return { letter: "F", color: "#ef4444" };
 }
 
@@ -79,28 +79,20 @@ export function ScoreGauge({
 
   return (
     <div
-      className={`depth-stage relative inline-flex items-center justify-center ${className}`}
-      style={{
-        width: size,
-        height: size,
-      }}
+      className={`relative inline-flex items-center justify-center ${className}`}
+      style={{ width: size, height: size }}
     >
-      <div
-        className="absolute inset-[16%] rounded-full"
-        style={{
-          backgroundColor: "var(--bg-surface)",
-          border: "1px solid var(--border-default)",
-        }}
-      />
       <svg width={size} height={size} className="-rotate-90">
+        {/* Background circle */}
         <circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="var(--border-default)"
+          stroke="rgba(255,255,255,0.04)"
           strokeWidth={strokeWidth}
         />
+        {/* Score arc */}
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -112,41 +104,31 @@ export function ScoreGauge({
           strokeDasharray={circumference}
           strokeDashoffset={dashOffset}
           style={{
+            filter: `drop-shadow(0 0 6px ${color})`,
             transition: "stroke-dashoffset 0.05s linear",
           }}
         />
       </svg>
 
+      {/* Center content */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="flex items-baseline gap-0.5">
-          <span
-            className="font-bold leading-none tabular-nums"
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: size * 0.28,
-              color: "var(--text-primary)",
-            }}
-          >
-            {displayedScore}
-          </span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: size * 0.11,
-              color: "var(--text-muted)",
-            }}
-          >
-            /100
-          </span>
-        </div>
+        <span
+          className="font-bold leading-none tabular-nums"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: size * 0.28,
+            color: "var(--text-primary)",
+          }}
+        >
+          {displayedScore}
+        </span>
         {showGrade && (
           <span
             className="font-bold mt-1"
             style={{
               fontFamily: "var(--font-display)",
-              fontSize: size * 0.14,
+              fontSize: size * 0.12,
               color: grade.color,
-              letterSpacing: "0.08em",
             }}
           >
             {grade.letter}

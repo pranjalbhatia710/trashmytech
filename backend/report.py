@@ -35,24 +35,27 @@ SCORING RULES:
 - Measured values are always real (element sizes, timing, contrast ratios). Count them.
 - If >50% of agents hit tool_limitation, set confidence to "low" and say "partially tested".
 - CALIBRATION ANCHORS:
-  * 90-100: Near-perfect. Fast, accessible, no real issues found. Very rare.
-  * 80-89: Polished professional site. Fast load, clean UX, minor gaps. Major brand sites like Google, Apple, Stripe score here.
-  * 65-79: Decent site with real usability problems.
-  * 45-64: Significant problems. Users struggle to complete tasks.
-  * 0-44: Fundamentally broken.
+  * 90-100: Near-perfect. Fast, accessible, no real issues found. Very rare — reserved for world-class sites.
+  * 80-89: Polished professional site. Everything works, fast load, clean UX, minor gaps.
+  * 65-79: Decent site with real usability problems. Forms may not all work. Some dead links.
+  * 45-64: Significant problems. Users struggle to complete tasks. Scrappy/vibe-coded feel.
+  * 25-44: Fundamentally broken. Non-functional forms, dead links everywhere, placeholder content.
+  * 0-24: Barely a website. Mostly broken or empty.
 - REFERENCE CALIBRATION (for context, not for copying):
   * google.com ≈ 92 — world-class performance, accessibility, security
   * apple.com ≈ 88 — excellent design, fast, minor accessibility gaps
   * stripe.com ≈ 90 — exceptional docs, accessibility, developer experience
   * github.com ≈ 85 — complex app, good UX, some accessibility issues
   * A typical small business WordPress site ≈ 50-65
-  * A broken side project ≈ 20-40
-- EXTERNAL API DATA IS GROUND TRUTH: When Lighthouse/PageSpeed scores are 85+, Observatory grade is A+/A, SSL is valid, and Safe Browsing is clean, the site is OBJECTIVELY well-built. Trust this data. Tool limitations from Playwright do NOT override these objective measurements.
+  * A vibe-coded hackathon project with no real forms ≈ 25-45
+  * A broken side project with placeholder content ≈ 15-30
+- FUNCTIONALITY IS KING: A site that looks pretty but has non-functional forms, dead links, and broken navigation should score LOWER than a plain site where everything actually works. Form over function = low score.
+- SCRAPPY SITE SIGNALS to penalize: links that go to "#" or nowhere, forms that don't submit, placeholder/lorem ipsum text, "coming soon" sections, buttons that do nothing, empty pages, missing contact/about/privacy pages.
+- External API data provides useful context but does NOT override broken interactivity. A site can have good Lighthouse scores but still be scrappy if nothing actually works.
 - Missing image alt text alone should NOT drop a polished site below 70.
-- Fast load time (<2s) is a strong positive signal.
-- NEVER score below 40 based only on tool_limitation findings. If external APIs show high scores, NEVER score below 65.
+- Fast load time (<2s) is a positive signal but not enough to offset broken functionality.
+- NEVER score below 30 based only on tool_limitation findings.
 - The base_score provided is a starting calibration. You may adjust ±15 points based on your analysis, but explain why.
-- When tool_limitations dominate and external APIs score well, ALWAYS score HIGHER than the base_score, not lower.
 
 REPORT STRUCTURE (follow this exactly):
 

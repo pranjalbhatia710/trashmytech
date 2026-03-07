@@ -3,12 +3,12 @@
 Aggregates data from crawl results, persona agent sessions, and external API
 checks into a single 0-100 score with six weighted categories:
 
-    Accessibility  25%
-    SEO            20%
+    Accessibility  20%
+    SEO            15%
     Performance    20%
     Content        15%
     Security       10%
-    UX             10%
+    UX             20%
 
 Each category is itself a weighted blend of sub-metrics.  When a data source
 is unavailable the sub-metric weight is redistributed proportionally among
@@ -28,12 +28,12 @@ log = logging.getLogger("trashmy.scoring")
 # Top-level category weights  (must sum to 1.0)
 # ---------------------------------------------------------------------------
 SCORE_WEIGHTS: dict[str, float] = {
-    "accessibility": 0.25,
-    "seo":           0.20,
+    "accessibility": 0.20,
+    "seo":           0.15,
     "performance":   0.20,
     "content":       0.15,
     "security":      0.10,
-    "ux":            0.10,
+    "ux":            0.20,
 }
 
 # ---------------------------------------------------------------------------
@@ -161,22 +161,25 @@ def _score_accessibility(crawl: dict, sessions: list[dict], external: dict) -> C
 
     # -- Helper: adjusted completion rate that accounts for tool limitations --
     def _adjusted_completion(persona_sessions: list[dict]) -> float:
-        """Calculate completion rate, partially crediting tool_limitation failures and thorough exploration."""
+        """Calculate completion rate. Strict: only full credit for real completion without many bugs."""
         completed = 0.0
         for s in persona_sessions:
+            real_bugs = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
             if s.get("task_completed"):
-                completed += 1.0
+                if len(real_bugs) >= 3:
+                    completed += 0.5  # finished but found many issues
+                else:
+                    completed += 1.0
             elif s.get("steps_taken", 0) >= 15:
-                completed += 0.7  # exploring a lot doesn't mean the site is good
+                completed += 0.4  # explored a lot but couldn't complete
             elif s.get("steps_taken", 0) >= 8:
-                completed += 0.35
+                completed += 0.2
             else:
                 tool_lims = len(s.get("tool_limitations", []))
-                real_bugs = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
                 if tool_lims > 0 and len(real_bugs) == 0:
-                    completed += 0.6  # tool limitations shouldn't be rewarded that much
+                    completed += 0.4
                 elif tool_lims > 0 and len(real_bugs) <= 1:
-                    completed += 0.3
+                    completed += 0.2
         return (completed / len(persona_sessions)) * 100 if persona_sessions else 0
 
     # -- Keyboard persona completion ----------------------------------------
@@ -530,12 +533,13 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
 # CONTENT  (15 %)
 # ===================================================================
 # Sub-metrics:
-#   readability       20 %   Flesch score mapped
+#   readability       15 %   Flesch score mapped
 #   grammar           15 %   error count
 #   heading_structure  15 %
 #   trust_signals     20 %   privacy policy, contact, about, testimonials
 #   value_proposition 15 %   from content evaluator
-#   alt_text_coverage 15 %   % of images with alt
+#   alt_text_coverage 10 %   % of images with alt
+#   completeness      10 %   broken links, placeholder content penalty
 # ===================================================================
 
 def _flesch_to_score(flesch: float | None) -> float | None:
@@ -567,7 +571,7 @@ def _score_content(crawl: dict, sessions: list[dict], external: dict) -> Categor
     readability = _flesch_to_score(flesch)
     if readability is not None:
         breakdown["readability"] = round(readability, 1)
-    items.append(("readability", readability, 0.20))
+    items.append(("readability", readability, 0.15))
 
     # -- Grammar errors -----------------------------------------------------
     grammar_count = external.get("grammar_errors")
@@ -601,7 +605,7 @@ def _score_content(crawl: dict, sessions: list[dict], external: dict) -> Categor
     # -- Trust signals (privacy policy, contact, about, testimonials) -------
     trust = _detect_trust_signals(crawl, sessions)
     found = sum([trust["privacy_policy"], trust["contact_info"], trust["about_page"], trust["testimonials"]])
-    trust_score = min(100, 25 + found * 25)  # base 25, +25 per signal found
+    trust_score = min(100, 15 + found * 25)  # base 15, +25 per signal found
     breakdown["trust_signals"] = round(trust_score, 1)
     items.append(("trust_signals", trust_score, 0.20))
 
@@ -621,13 +625,36 @@ def _score_content(crawl: dict, sessions: list[dict], external: dict) -> Categor
         if total > 0:
             coverage = ((total - missing_alt) / total) * 100
             breakdown["alt_text_coverage"] = round(coverage, 1)
-            items.append(("alt_text_coverage", coverage, 0.15))
+            items.append(("alt_text_coverage", coverage, 0.10))
         else:
-            # No images -- full marks, nothing to penalise
             breakdown["alt_text_coverage"] = 100.0
-            items.append(("alt_text_coverage", 100.0, 0.15))
+            items.append(("alt_text_coverage", 100.0, 0.10))
     else:
-        items.append(("alt_text_coverage", None, 0.15))
+        items.append(("alt_text_coverage", None, 0.10))
+
+    # -- Broken links & placeholder content (scrappiness penalty) ----------
+    broken_links = 0
+    total_links = len(crawl.get("links", []))
+    for link in crawl.get("links", []):
+        href = (link.get("href") or "").strip()
+        text = (link.get("text") or "").strip().lower()
+        if href in ("#", "", "javascript:void(0)", "javascript:void(0);", "javascript:;"):
+            broken_links += 1
+        if text in ("lorem ipsum", "click here", "link", "test", "asdf", "placeholder"):
+            broken_links += 1
+    # Check page text for placeholder content via agent observations
+    placeholder_signals = 0
+    for s in sessions:
+        for step in s.get("steps", []):
+            obs = (step.get("observation") or "").lower()
+            if any(kw in obs for kw in ("lorem ipsum", "placeholder", "coming soon",
+                                         "under construction", "todo", "fixme",
+                                         "sample text", "default text", "test page")):
+                placeholder_signals += 1
+    scrappy_deductions = broken_links * 4 + placeholder_signals * 8
+    completeness = _clamp(100 - scrappy_deductions)
+    breakdown["completeness"] = round(completeness, 1)
+    items.append(("completeness", completeness, 0.10))
 
     score, used, missing_srcs = _weighted_average(items)
     return CategoryScore(
@@ -690,23 +717,17 @@ def _detect_trust_signals(crawl: dict, sessions: list[dict]) -> dict[str, bool]:
 # UX  (10 %)
 # ===================================================================
 # Sub-metrics:
-#   task_completion   35 %   average across all behavioural personas
-#   chaos_survival    25 %   chaos agent crash rate
-#   confusion_signals 20 %   count of confused/stuck moments
-#   mobile_usability  20 %   mobile persona outcomes
+#   task_completion     25 %   average across all behavioural personas
+#   form_functionality  20 %   do forms actually work (have action, fields, submit)
+#   chaos_survival      15 %   chaos agent crash rate
+#   confusion_signals   15 %   count of confused/stuck moments
+#   broken_interactivity 15 %  dead clicks, broken links, non-functional elements
+#   mobile_usability    10 %   mobile persona outcomes
 # ===================================================================
 
 def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScore:
     breakdown: dict[str, float] = {}
     items: list[tuple[str, float | None, float]] = []
-
-    # -- Count how many sessions are dominated by tool limitations ----------
-    total_tool_lims = sum(len(s.get("tool_limitations", [])) for s in sessions)
-    total_real_issues = sum(
-        len([f for f in s.get("findings", []) if f.get("is_site_bug", True)])
-        for s in sessions
-    )
-    tool_lim_dominant = total_tool_lims > total_real_issues * 2 and total_tool_lims > 5
 
     # -- Task completion rate (all non-chaos behavioural personas) ----------
     behavioural = [s for s in sessions
@@ -715,20 +736,63 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
         completed = 0
         for s in behavioural:
             if s.get("task_completed"):
-                completed += 1
+                # "done" with real findings = site has problems even if agent finished
+                real_bugs = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
+                if len(real_bugs) >= 3:
+                    completed += 0.6  # agent finished but found lots of issues
+                else:
+                    completed += 1
             elif s.get("steps_taken", 0) >= 15:
-                completed += 0.7  # exploring a lot doesn't mean the site is good
+                completed += 0.5
             elif s.get("steps_taken", 0) >= 8:
-                completed += 0.35
+                completed += 0.25
             else:
                 tool_lims = len(s.get("tool_limitations", []))
                 if tool_lims > 0:
-                    completed += 0.5
+                    completed += 0.3
         rate = (completed / len(behavioural)) * 100
         breakdown["task_completion"] = round(rate, 1)
-        items.append(("task_completion", rate, 0.35))
+        items.append(("task_completion", rate, 0.25))
     else:
-        items.append(("task_completion", None, 0.35))
+        items.append(("task_completion", None, 0.25))
+
+    # -- Form functionality ------------------------------------------------
+    # Scrappy vibe-coded sites have forms that don't actually do anything:
+    # no action, action="#", action="javascript:void(0)", or no submit button
+    forms = crawl.get("forms", [])
+    if forms:
+        functional_forms = 0
+        for form in forms:
+            action = (form.get("action") or "").strip()
+            method = (form.get("method") or "GET").upper()
+            fields = form.get("fields", [])
+            has_real_action = bool(action) and action not in ("#", "javascript:void(0)", "javascript:void(0);", "javascript:;")
+            has_fields = len(fields) > 0
+            has_submit = any(
+                f.get("type") in ("submit", "button") or f.get("tag") == "button"
+                for f in fields
+            )
+            if has_real_action and has_fields:
+                functional_forms += 1
+            elif has_fields and has_submit and method == "POST":
+                functional_forms += 0.5  # form submits but action is unclear
+        form_rate = (functional_forms / len(forms)) * 100
+        # Also penalize if agents found form submission failures
+        form_failures = 0
+        for s in sessions:
+            for step in s.get("steps", []):
+                obs = (step.get("observation") or "").lower()
+                if any(kw in obs for kw in ("form didn't submit", "nothing happened", "form does nothing",
+                                             "submit didn't work", "no confirmation", "no response",
+                                             "form broken", "doesn't send", "no feedback")):
+                    form_failures += 1
+        form_rate = _clamp(form_rate - form_failures * 10)
+        breakdown["form_functionality"] = round(form_rate, 1)
+        items.append(("form_functionality", form_rate, 0.20))
+    else:
+        # No forms isn't necessarily bad, but it's not great for interactivity
+        # Give neutral score — don't penalize pure content sites
+        items.append(("form_functionality", None, 0.20))
 
     # -- Chaos agent survival ----------------------------------------------
     chaos = [s for s in sessions if s.get("persona", {}).get("category") == "chaos"]
@@ -742,9 +806,9 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
                 crashes += 1
         survival = _clamp(100 - crashes * 25)
         breakdown["chaos_survival"] = round(survival, 1)
-        items.append(("chaos_survival", survival, 0.25))
+        items.append(("chaos_survival", survival, 0.15))
     else:
-        items.append(("chaos_survival", None, 0.25))
+        items.append(("chaos_survival", None, 0.15))
 
     # -- Confusion signals --------------------------------------------------
     confusion_count = 0
@@ -754,13 +818,44 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
             action = (step.get("action") or "").lower()
             if action == "stuck":
                 confusion_count += 1
-            if any(kw in obs for kw in ("confus", "don't understand", "where is", "can't find", "no idea")):
+            if any(kw in obs for kw in ("confus", "don't understand", "where is", "can't find",
+                                         "no idea", "nothing happened", "doesn't work", "broken",
+                                         "dead link", "404", "not found", "empty page")):
                 confusion_count += 1
         for de in s.get("dead_ends", []):
             confusion_count += 1
-    confusion_score = _clamp(100 - confusion_count * 5)
+    confusion_score = _clamp(100 - confusion_count * 6)
     breakdown["confusion_signals"] = round(confusion_score, 1)
-    items.append(("confusion_signals", confusion_score, 0.20))
+    items.append(("confusion_signals", confusion_score, 0.15))
+
+    # -- Broken interactivity (dead clicks, non-functional elements) --------
+    dead_clicks = 0
+    total_clicks = 0
+    for s in sessions:
+        for step in s.get("steps", []):
+            if step.get("action") == "click":
+                total_clicks += 1
+                if not step.get("executed", True):
+                    dead_clicks += 1
+                # Check if click resulted in no visible change
+                obs = (step.get("observation") or "").lower()
+                if any(kw in obs for kw in ("nothing happened", "no change", "didn't do anything",
+                                             "nothing changed", "no response", "dead", "broken link")):
+                    dead_clicks += 1
+    # Also count broken links from crawl data
+    broken_links = 0
+    for link in crawl.get("links", []):
+        href = (link.get("href") or "").strip()
+        if href in ("#", "", "javascript:void(0)", "javascript:void(0);", "javascript:;"):
+            broken_links += 1
+    if total_clicks > 0 or broken_links > 0:
+        dead_rate = dead_clicks / max(total_clicks, 1)
+        link_penalty = min(30, broken_links * 3)
+        interactivity_score = _clamp(100 - dead_rate * 100 - link_penalty)
+        breakdown["broken_interactivity"] = round(interactivity_score, 1)
+        items.append(("broken_interactivity", interactivity_score, 0.15))
+    else:
+        items.append(("broken_interactivity", None, 0.15))
 
     # -- Mobile usability ---------------------------------------------------
     mobile = [s for s in sessions
@@ -769,9 +864,9 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
         mobile_completed = sum(1 for s in mobile if s.get("task_completed"))
         mobile_rate = (mobile_completed / len(mobile)) * 100
         breakdown["mobile_usability"] = round(mobile_rate, 1)
-        items.append(("mobile_usability", mobile_rate, 0.20))
+        items.append(("mobile_usability", mobile_rate, 0.10))
     else:
-        items.append(("mobile_usability", None, 0.20))
+        items.append(("mobile_usability", None, 0.10))
 
     score, used, missing = _weighted_average(items)
     return CategoryScore(
@@ -853,17 +948,18 @@ def _compute_external_signal_floor(ext: dict) -> float:
     if sb == "clean" or sb is True:
         signals.append(88)
 
-    if len(signals) < 1:
-        return 0.0  # no strong signals to establish a floor
+    if len(signals) < 2:
+        return 0.0  # single signal isn't enough to establish a floor
 
-    # Floor = average of strong signals, dampened based on signal count
+    # Floor = average of strong signals, dampened — external data alone
+    # should NOT override broken interactivity that agents discover
     avg = sum(signals) / len(signals)
-    if len(signals) >= 3:
-        floor = avg * 0.92  # high confidence — many corroborating signals
-    elif len(signals) == 2:
-        floor = avg * 0.88  # moderate confidence
+    if len(signals) >= 4:
+        floor = avg * 0.80  # many signals, but agents still matter
+    elif len(signals) >= 3:
+        floor = avg * 0.72
     else:
-        floor = avg * 0.75  # single signal — apply conservatively
+        floor = avg * 0.65  # two signals — conservative
     return round(floor, 1)
 
 
@@ -955,6 +1051,29 @@ def _compute_hard_caps(crawl_data: dict, ext: dict) -> list[tuple[float, str]]:
     elif ssl_data and ssl_data.get("valid") is False:
         caps.append((50.0, "SSL certificate is invalid or expired"))
 
+    # Mostly non-functional links = scrappy site
+    links = crawl_data.get("links", [])
+    if len(links) >= 3:
+        dead = sum(
+            1 for l in links
+            if (l.get("href") or "").strip() in ("#", "", "javascript:void(0)", "javascript:void(0);", "javascript:;")
+        )
+        dead_ratio = dead / len(links)
+        if dead_ratio >= 0.6:
+            caps.append((35.0, f"{dead}/{len(links)} links are non-functional"))
+        elif dead_ratio >= 0.4:
+            caps.append((50.0, f"{dead}/{len(links)} links are non-functional"))
+
+    # All forms are non-functional (no action, no method)
+    forms = crawl_data.get("forms", [])
+    if len(forms) >= 1:
+        nonfunc = sum(
+            1 for f in forms
+            if (f.get("action") or "").strip() in ("", "#", "javascript:void(0)", "javascript:void(0);", "javascript:;")
+        )
+        if nonfunc == len(forms):
+            caps.append((45.0, f"All {len(forms)} form(s) have no real submit action"))
+
     return caps
 
 
@@ -1009,9 +1128,9 @@ def calculate_scores(
         len([f for f in s.get("findings", []) if f.get("is_site_bug", True)])
         for s in agent_results
     )
-    if total_real_issues == 0 and total_tool_lims > 0 and ext_floor > 60:
-        # Zero real issues + tool limitations + strong external signals → site is better than we measured
-        boost = min(5, total_tool_lims // 5)
+    if total_real_issues == 0 and total_tool_lims > 0 and ext_floor > 70:
+        # Zero real issues + tool limitations + strong external signals → mild boost
+        boost = min(3, total_tool_lims // 8)
         overall = min(100, overall + boost)
 
     # Apply hard caps for critical failures (Safe Browsing, no HTTPS, invalid SSL)

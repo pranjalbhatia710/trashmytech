@@ -17,6 +17,6 @@ services:
       - key: HEADLESS
         value: "true"
       - key: AGENT_COUNT
-        value: "10"
+        value: "30"
       - key: NUM_BROWSERS
         value: "5"

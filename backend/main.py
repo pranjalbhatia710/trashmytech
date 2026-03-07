@@ -42,7 +42,7 @@ load_dotenv()
 
 # ── Config ──────────────────────────────────────────────────────────
 
-AGENT_COUNT = int(os.getenv("AGENT_COUNT", "20"))
+AGENT_COUNT = int(os.getenv("AGENT_COUNT", "30"))
 USE_MODAL = os.getenv("USE_MODAL", "false").lower() == "true"
 
 RATE_LIMIT_MAX = 5

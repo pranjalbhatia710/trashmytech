@@ -67,7 +67,7 @@ Create `backend/.env`:
 ```
 GEMINI_API_KEY=your_key_here
 USE_MODAL=true
-AGENT_COUNT=20
+AGENT_COUNT=30
 HEADLESS=false
 ```
 

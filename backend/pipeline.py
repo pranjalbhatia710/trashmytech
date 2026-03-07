@@ -75,7 +75,7 @@ async def run_swarm(
     from playwright.async_api import async_playwright as pw_start
 
     personas = sample_personas(agent_count)
-    num_browsers = min(int(os.getenv("NUM_BROWSERS", "15")), len(personas))
+    num_browsers = min(int(os.getenv("NUM_BROWSERS", "5")), len(personas))
     headed = os.getenv("HEADLESS", "true").lower() == "false"
 
     await send({

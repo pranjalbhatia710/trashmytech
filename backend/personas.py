@@ -541,8 +541,8 @@ ADVERSARIAL_INPUTS = [
 ]
 
 
-def sample_personas(n: int = 20) -> list[dict]:
-    """Pick n personas ensuring at least 2 per category. Default 20 for thorough testing."""
+def sample_personas(n: int = 30) -> list[dict]:
+    """Pick n personas ensuring at least 2 per category. Default 30 for thorough testing."""
     categories = ["accessibility", "demographic", "chaos", "behavioral", "portfolio", "content_seo"]
     selected = []
 

@@ -413,7 +413,7 @@ export default function Home() {
               className="text-[14px] mb-3 leading-relaxed"
               style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}
             >
-              50 AI personas. 15 external audits. One brutal report.
+              30 AI personas. 15 external audits. One brutal report.
             </motion.p>
 
             {/* Typewriter */}

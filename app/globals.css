@@ -4,32 +4,32 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Backgrounds - warm dark */
-  --bg-base: #0a0a0c;
-  --bg-surface: #111114;
-  --bg-elevated: #1a1a1f;
-  --bg-hover: #222228;
+  /* Backgrounds - cool dark */
+  --bg-base: #08090d;
+  --bg-surface: #0f1117;
+  --bg-elevated: #181b25;
+  --bg-hover: #1e2130;
 
-  /* Borders - subtle, warm */
-  --border-default: #2a2a32;
-  --border-hover: #3a3a44;
-  --border-focus: #4a4a56;
+  /* Borders - cool-tinted */
+  --border-default: #252a3a;
+  --border-hover: #303750;
+  --border-focus: #3d4560;
 
   /* Text */
-  --text-primary: #e8e6e3;
-  --text-secondary: #8a8690;
-  --text-muted: #5a5660;
+  --text-primary: #d4d7e0;
+  --text-secondary: #7a8099;
+  --text-muted: #4a506a;
 
-  /* Accent - warm amber */
-  --accent: #e8a44a;
-  --accent-hover: #f0b45a;
-  --accent-subtle: rgba(232, 164, 74, 0.1);
+  /* Accent - cool electric blue */
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-subtle: rgba(59, 130, 246, 0.1);
 
   /* Status */
-  --status-pass: #4ade80;
-  --status-fail: #f87171;
-  --status-warn: #fbbf24;
-  --status-info: #60a5fa;
+  --status-pass: #22c55e;
+  --status-fail: #ef4444;
+  --status-warn: #eab308;
+  --status-info: #3b82f6;
 
   /* Category accents */
   --cat-accessibility: #60a5fa;
@@ -40,7 +40,7 @@
   --cat-ai-seo: #2dd4bf;
 
   /* Legacy compat */
-  --accent-primary: #e8a44a;
+  --accent-primary: #3b82f6;
   --accent-accessibility: #60a5fa;
   --accent-chaos: #a78bfa;
   --accent-demographic: #2dd4bf;
@@ -81,7 +81,7 @@ body {
 }
 
 ::selection {
-  background-color: rgba(232, 164, 74, 0.25);
+  background-color: rgba(59, 130, 246, 0.25);
   color: #fff;
 }
 
@@ -106,7 +106,7 @@ body {
 
 /* ── Focus ring ─────────────────────────────────────── */
 *:focus-visible {
-  outline: 2px solid rgba(232, 164, 74, 0.4);
+  outline: 2px solid rgba(59, 130, 246, 0.4);
   outline-offset: 2px;
 }
 
@@ -159,11 +159,11 @@ body {
 
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(232, 164, 74, 0);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
   }
 
   50% {
-    box-shadow: 0 0 20px 4px rgba(232, 164, 74, 0.15);
+    box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.15);
   }
 }
 
@@ -197,7 +197,7 @@ body {
 
 /* ── Utility classes ────────────────────────────────── */
 .glass-card {
-  background: rgba(17, 17, 20, 0.85);
+  background: rgba(15, 17, 23, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-default);
@@ -210,7 +210,7 @@ body {
 }
 
 .glass-card-hover:hover {
-  background: rgba(26, 26, 31, 0.95);
+  background: rgba(24, 27, 37, 0.95);
   border-color: var(--border-hover);
   transform: translateY(-1px);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
@@ -218,7 +218,7 @@ body {
 
 .text-gradient-amber {
   display: inline;
-  background: linear-gradient(135deg, #e8a44a 0%, #f0b45a 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -228,7 +228,7 @@ body {
 /* Legacy compat */
 .text-gradient-red {
   display: inline;
-  background: linear-gradient(135deg, #e8a44a 0%, #f0b45a 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -236,7 +236,7 @@ body {
 }
 
 .shimmer-bg {
-  background: linear-gradient(90deg, transparent 0%, rgba(232, 164, 74, 0.04) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.04) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s ease-in-out infinite;
 }
@@ -289,7 +289,7 @@ body {
 
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(232, 164, 74, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(59, 130, 246, 0.08);
 }
 
 /* ── Score gauge glow ──────────────────────────────── */
@@ -297,11 +297,11 @@ body {
 
   0%,
   100% {
-    filter: drop-shadow(0 0 8px rgba(232, 164, 74, 0.15));
+    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.15));
   }
 
   50% {
-    filter: drop-shadow(0 0 16px rgba(232, 164, 74, 0.3));
+    filter: drop-shadow(0 0 16px rgba(59, 130, 246, 0.3));
   }
 }
 

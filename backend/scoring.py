@@ -167,16 +167,16 @@ def _score_accessibility(crawl: dict, sessions: list[dict], external: dict) -> C
             if s.get("task_completed"):
                 completed += 1.0
             elif s.get("steps_taken", 0) >= 15:
-                completed += 0.85  # thorough exploration
+                completed += 0.7  # exploring a lot doesn't mean the site is good
             elif s.get("steps_taken", 0) >= 8:
-                completed += 0.5
+                completed += 0.35
             else:
                 tool_lims = len(s.get("tool_limitations", []))
                 real_bugs = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
                 if tool_lims > 0 and len(real_bugs) == 0:
-                    completed += 0.75
+                    completed += 0.6  # tool limitations shouldn't be rewarded that much
                 elif tool_lims > 0 and len(real_bugs) <= 1:
-                    completed += 0.4
+                    completed += 0.3
         return (completed / len(persona_sessions)) * 100 if persona_sessions else 0
 
     # -- Keyboard persona completion ----------------------------------------
@@ -717,13 +717,13 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
             if s.get("task_completed"):
                 completed += 1
             elif s.get("steps_taken", 0) >= 15:
-                completed += 0.85  # completed exploration even if not explicitly "done"
+                completed += 0.7  # exploring a lot doesn't mean the site is good
             elif s.get("steps_taken", 0) >= 8:
-                completed += 0.5
+                completed += 0.35
             else:
                 tool_lims = len(s.get("tool_limitations", []))
                 if tool_lims > 0:
-                    completed += 0.6
+                    completed += 0.5
         rate = (completed / len(behavioural)) * 100
         breakdown["task_completion"] = round(rate, 1)
         items.append(("task_completion", rate, 0.35))
@@ -740,7 +740,7 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
                 crashes += 1
             if s.get("outcome") == "blocked" and not s.get("tool_limitations"):
                 crashes += 1
-        survival = _clamp(100 - crashes * 15)
+        survival = _clamp(100 - crashes * 25)
         breakdown["chaos_survival"] = round(survival, 1)
         items.append(("chaos_survival", survival, 0.25))
     else:
@@ -853,13 +853,17 @@ def _compute_external_signal_floor(ext: dict) -> float:
     if sb == "clean" or sb is True:
         signals.append(88)
 
-    if len(signals) < 2:
-        return 0.0  # not enough strong signals to establish a floor
+    if len(signals) < 1:
+        return 0.0  # no strong signals to establish a floor
 
-    # Floor = average of strong signals, dampened slightly
+    # Floor = average of strong signals, dampened based on signal count
     avg = sum(signals) / len(signals)
-    # Floor is avg * 0.85 — gives a floor of ~72-78 for sites scoring 85+ across the board
-    floor = avg * 0.85
+    if len(signals) >= 3:
+        floor = avg * 0.92  # high confidence — many corroborating signals
+    elif len(signals) == 2:
+        floor = avg * 0.88  # moderate confidence
+    else:
+        floor = avg * 0.75  # single signal — apply conservatively
     return round(floor, 1)
 
 
@@ -980,9 +984,9 @@ def calculate_scores(
         len([f for f in s.get("findings", []) if f.get("is_site_bug", True)])
         for s in agent_results
     )
-    if total_tool_lims > total_real_issues * 3 and ext_floor > 0:
-        # Heavy tool limitations + strong external signals → site is better than we measured
-        boost = min(8, total_tool_lims // 5)
+    if total_real_issues == 0 and total_tool_lims > 0 and ext_floor > 60:
+        # Zero real issues + tool limitations + strong external signals → site is better than we measured
+        boost = min(5, total_tool_lims // 5)
         overall = min(100, overall + boost)
 
     overall = round(_clamp(overall), 1)

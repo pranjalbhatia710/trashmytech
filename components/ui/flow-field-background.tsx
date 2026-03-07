@@ -21,7 +21,7 @@ interface NeuralBackgroundProps {
 
 export default function NeuralBackground({
   className,
-  color = "#e8a44a",
+  color = "#3b82f6",
   trailOpacity = 0.02,
   particleCount = 350,
   speed = 0.6,
@@ -285,7 +285,7 @@ export default function NeuralBackground({
       }
 
       // Fade trail — more opaque = faster fade = cleaner look
-      ctx.fillStyle = `rgba(10, 10, 12, ${trailOpacity + 0.06})`;
+      ctx.fillStyle = `rgba(8, 9, 13, ${trailOpacity + 0.06})`;
       ctx.fillRect(0, 0, w, h);
 
       const cx = w * 0.5;
@@ -563,7 +563,7 @@ export default function NeuralBackground({
   }, [color, trailOpacity, particleCount, speed]);
 
   return (
-    <div ref={containerRef} className={cn("relative w-full h-full overflow-hidden", className)} style={{ backgroundColor: "#0a0a0c" }}>
+    <div ref={containerRef} className={cn("relative w-full h-full overflow-hidden", className)} style={{ backgroundColor: "#08090d" }}>
       <canvas ref={canvasRef} className="block w-full h-full" />
     </div>
   );

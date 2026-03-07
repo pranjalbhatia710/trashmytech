@@ -29,10 +29,11 @@ from personas import sample_personas
 from report import generate_report, generate_fix_prompt
 from agent import run_agent_local
 from annotator import annotate_screenshot
-from gemini_tools import GeminiTools
+from openai import OpenAI
 from external_apis import run_all_external_apis
 from scoring import calculate_scores
 from quick_wins import generate_quick_wins
+from auth.auth_manager import list_profiles as list_auth_profiles, delete_profile as delete_auth_profile, create_auth_profile
 
 # Database and cache imports
 from db.connection import init_pool, close_pool, run_migrations, is_available as db_available
@@ -257,7 +258,7 @@ async def health():
 
 @app.get("/v1/keyword")
 async def extract_keyword(url: str):
-    """Use Gemini Flash to extract the main brand/keyword from a URL."""
+    """Use GPT-5.2 to extract the main brand/keyword from a URL."""
     from urllib.parse import urlparse
 
     # Fast fallback: extract from domain name
@@ -269,22 +270,27 @@ async def extract_keyword(url: str):
         fallback = "SITE"
 
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             return {"keyword": fallback}
 
-        client = genai.Client(api_key=api_key)
+        client = OpenAI(api_key=api_key)
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-2.5-flash",
-            contents=(
-                f"What is the brand name from this URL? Return ONLY the single brand/company name word, "
-                f"nothing else. Max 10 characters. URL: {url}"
-            ),
-            config=GenerateContentConfig(max_output_tokens=20),
+            client.chat.completions.create,
+            model="gpt-5.2",
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"What is the brand name from this URL? Return ONLY the single brand/company name word, "
+                        f"nothing else. Max 10 characters. URL: {url}"
+                    ),
+                }
+            ],
+            max_completion_tokens=20,
         )
-        keyword = response.text.strip().strip('"\'.,!?:').upper()
-        # Sanity check — if Gemini returned garbage, use fallback
+        keyword = response.choices[0].message.content.strip().strip('"\'.,!?:').upper()
+        # Sanity check — if GPT returned garbage, use fallback
         if not keyword or len(keyword) > 14 or " " in keyword:
             keyword = fallback
         return {"keyword": keyword}
@@ -466,6 +472,7 @@ async def create_test(request: Request, force_refresh: bool = Query(False)):
     tests_store[test_id] = {
         "test_id": test_id, "url": url, "status": "queued",
         "created_at": now, "crawl_data": None, "agent_results": [], "report": None,
+        "auth_profile": body.get("auth_profile"),
     }
     rate_limit_store[client_ip].append(now)
     idempotency_cache[url] = (test_id, now)
@@ -645,7 +652,7 @@ async def get_stats():
 
 
 # ---------------------------------------------------------------------------
-# Preview — quick Gemini Flash analysis
+# Preview — quick GPT-5.2 analysis
 # ---------------------------------------------------------------------------
 @app.post("/v1/preview")
 async def preview_url(request: Request):
@@ -665,24 +672,72 @@ async def preview_url(request: Request):
         return preview_cache[url]
 
     try:
-        tools = GeminiTools(model="flash")
-        raw = await asyncio.to_thread(
-            tools.analyze_url,
-            url,
-            (
-                "Analyze this website and return a JSON object with exactly these fields:\n"
-                '- "site_name": the name or title of the site\n'
-                '- "description": one sentence describing what this site does\n'
-                '- "audience": who the target audience is (one sentence)\n'
-                '- "observations": an array of exactly 3 strings, each a brief UX, accessibility, or performance observation about the site\n'
-                "Be specific and concise. Base observations on what you can actually see on the page."
-            ),
+        import httpx
+        # Fetch the page HTML for context
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as http:
+            resp = await http.get(url, headers={"User-Agent": "TrashmyTech/2.0"})
+            page_html = resp.text[:8000]  # Truncate to stay within token limits
+
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-5.2",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You analyze websites. Return a JSON object with exactly these fields:\n"
+                        '- "site_name": the name or title of the site\n'
+                        '- "description": one sentence describing what this site does\n'
+                        '- "audience": who the target audience is (one sentence)\n'
+                        '- "observations": an array of exactly 3 strings, each a brief UX, accessibility, or performance observation about the site\n'
+                        "Be specific and concise."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Analyze this website at {url}. Here is the page HTML:\n\n{page_html}",
+                },
+            ],
+            response_format={"type": "json_object"},
+            max_completion_tokens=500,
         )
-        result = json.loads(raw)
+        result = json.loads(response.choices[0].message.content.strip())
         preview_cache[url] = result
         return result
     except Exception as exc:
         return _error_response("preview_failed", f"Preview failed: {str(exc)[:200]}", 500)
+
+
+# ---------------------------------------------------------------------------
+# Auth profile endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/auth/profiles")
+async def get_auth_profiles():
+    """List all saved auth profiles."""
+    return JSONResponse({"profiles": list_auth_profiles()})
+
+
+@app.post("/v1/auth/profiles")
+async def create_profile(request: Request):
+    """Create a new auth profile by launching a headed browser for manual login."""
+    body = await request.json()
+    name = body.get("name")
+    url = body.get("url")
+    if not name or not url:
+        return JSONResponse({"error": "name and url are required"}, status_code=400)
+    result = await create_auth_profile(name, url)
+    return JSONResponse(result)
+
+
+@app.delete("/v1/auth/profiles/{name}")
+async def remove_profile(name: str):
+    """Delete a saved auth profile."""
+    deleted = delete_auth_profile(name)
+    if deleted:
+        return JSONResponse({"deleted": True, "name": name})
+    return JSONResponse({"error": "Profile not found"}, status_code=404)
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +890,7 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             "links_count": links_count,
             "forms_count": forms_count,
             "has_h1": seo.get("has_h1", False),
+            "auth_profile": test.get("auth_profile"),
         }
 
         # Screenshot streaming callback

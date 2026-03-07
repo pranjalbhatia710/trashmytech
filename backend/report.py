@@ -1,4 +1,4 @@
-"""trashmy.tech — Report generator using Gemini Pro with deep thinking + structured JSON.
+"""trashmy.tech — Report generator using OpenAI GPT-5.2 with structured JSON.
 
 Enhanced with composite scoring system, quick wins analysis, and full
 external-API data injection so the generated report cites concrete numbers.
@@ -10,18 +10,17 @@ import os
 import asyncio
 import traceback
 
-from google import genai
-from google.genai.types import GenerateContentConfig
+from openai import OpenAI
 
 from annotator import annotate_overview_screenshot
 
 log = logging.getLogger("trashmy.report")
 
 # ---------------------------------------------------------------------------
-# Model strategy — one API key, two models
+# Model strategy — OpenAI GPT-5.2 for everything
 # ---------------------------------------------------------------------------
-REPORT_MODEL = "gemini-2.5-pro"                # max reasoning for scored report
-ANNOTATION_MODEL = "gemini-2.5-flash"          # fast vision for bounding boxes
+REPORT_MODEL = "gpt-5.2"
+ANNOTATION_MODEL = "gpt-5.2"
 
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated
@@ -611,33 +610,32 @@ async def generate_report(
     }
 
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            report["error"] = "GEMINI_API_KEY not set"
+            report["error"] = "OPENAI_API_KEY not set"
             return report
 
-        client = genai.Client(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         prompt = (
             f"REPORT SCHEMA:\n{REPORT_SCHEMA}\n\n"
             f"TEST DATA:\n{payload}"
         )
 
-        # Gemini Pro with thinking + structured JSON output — expanded for detailed reports
+        # GPT-5.2 with structured JSON output — deep reasoning for detailed reports
         response = await asyncio.to_thread(
-            client.models.generate_content,
+            client.chat.completions.create,
             model=REPORT_MODEL,
-            contents=prompt,
-            config=GenerateContentConfig(
-                system_instruction=GEMINI_REPORT_PROMPT,
-                response_mime_type="application/json",
-                thinking_config={"thinking_budget": 24576},
-                max_output_tokens=32000,
-            ),
+            messages=[
+                {"role": "system", "content": GEMINI_REPORT_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_completion_tokens=32000,
         )
 
-        raw = response.text.strip()
-        # response_mime_type should give clean JSON, but strip fences just in case
+        raw = response.choices[0].message.content.strip()
+        # Should be clean JSON, but strip fences just in case
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             if raw.endswith("```"):
@@ -782,14 +780,14 @@ def _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations):
 
 
 # ---------------------------------------------------------------------------
-# LLM Fix Prompt Generator — uses Gemini Flash for speed
+# LLM Fix Prompt Generator — uses GPT-5.2
 # ---------------------------------------------------------------------------
 
 async def generate_fix_prompt(report: dict, url: str) -> str:
     """Generate a copy-paste prompt for ChatGPT/Claude to fix the issues found."""
-    from gemini_tools import GeminiTools
+    from openai import OpenAI
 
-    tools = GeminiTools(model="flash")
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
     score = report.get("score", {}).get("overall", "?")
     narrative = report.get("narrative", {})
@@ -862,12 +860,13 @@ If external_api_findings is present, also include a "Security Headers & Infrastr
 
 Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do not wrap in JSON."""
 
-    raw = await asyncio.to_thread(
-        tools._generate_content,
-        prompt,
-        use_url_context=False,
-        use_google_search=False,
-        thinking_level="LOW",
-        response_mime_type="text/plain",
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        model="gpt-5.2",
+        messages=[
+            {"role": "system", "content": "You generate actionable developer prompts for fixing website issues."},
+            {"role": "user", "content": prompt},
+        ],
+        max_completion_tokens=4000,
     )
-    return raw
+    return response.choices[0].message.content.strip()

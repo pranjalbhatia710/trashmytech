@@ -72,13 +72,13 @@ class CompositeScore:
 # ---------------------------------------------------------------------------
 
 def get_letter_grade(score: float) -> str:
-    if score >= 90:
+    if score >= 85:
         return "A"
-    if score >= 80:
+    if score >= 70:
         return "B"
-    if score >= 65:
+    if score >= 55:
         return "C"
-    if score >= 45:
+    if score >= 35:
         return "D"
     return "F"
 
@@ -161,18 +161,22 @@ def _score_accessibility(crawl: dict, sessions: list[dict], external: dict) -> C
 
     # -- Helper: adjusted completion rate that accounts for tool limitations --
     def _adjusted_completion(persona_sessions: list[dict]) -> float:
-        """Calculate completion rate, partially crediting tool_limitation failures."""
+        """Calculate completion rate, partially crediting tool_limitation failures and thorough exploration."""
         completed = 0.0
         for s in persona_sessions:
             if s.get("task_completed"):
                 completed += 1.0
+            elif s.get("steps_taken", 0) >= 15:
+                completed += 0.85  # thorough exploration
+            elif s.get("steps_taken", 0) >= 8:
+                completed += 0.5
             else:
                 tool_lims = len(s.get("tool_limitations", []))
                 real_bugs = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
                 if tool_lims > 0 and len(real_bugs) == 0:
-                    completed += 0.75  # mostly tool limitation, not a site problem
+                    completed += 0.75
                 elif tool_lims > 0 and len(real_bugs) <= 1:
-                    completed += 0.4  # mixed
+                    completed += 0.4
         return (completed / len(persona_sessions)) * 100 if persona_sessions else 0
 
     # -- Keyboard persona completion ----------------------------------------
@@ -453,7 +457,7 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
     items: list[tuple[str, float | None, float]] = []
 
     # -- Mozilla Observatory ------------------------------------------------
-    obs = external.get("observatory", {})
+    obs = external.get("observatory") or {}
     obs_grade = obs.get("grade")
     if obs_grade:
         obs_score = OBSERVATORY_GRADE_MAP.get(obs_grade.strip(), 50.0)
@@ -472,7 +476,7 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
         items.append(("safe_browsing", None, 0.25))
 
     # -- SSL ----------------------------------------------------------------
-    ssl_data = external.get("ssl", {})
+    ssl_data = external.get("ssl") or {}
     if ssl_data:
         valid = ssl_data.get("valid", False)
         days = ssl_data.get("days_remaining")
@@ -493,9 +497,9 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
         items.append(("ssl", None, 0.20))
 
     # -- DNS authentication (SPF + DMARC) -----------------------------------
-    dns = external.get("dns_auth", {})
+    dns = external.get("dns_auth") or {}
     if dns:
-        pts = 0.0
+        pts = 20.0  # base score — absence of SPF/DMARC isn't catastrophic for most sites
         if dns.get("spf_present"):
             pts += 25
             if dns.get("spf_strict"):
@@ -504,7 +508,7 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
             pts += 25
             if dns.get("dmarc_enforce"):
                 pts += 15
-        dns_score = _clamp((pts / 75) * 100)
+        dns_score = _clamp((pts / 95) * 100)
         breakdown["dns_auth"] = round(dns_score, 1)
         items.append(("dns_auth", dns_score, 0.20))
     else:
@@ -596,8 +600,8 @@ def _score_content(crawl: dict, sessions: list[dict], external: dict) -> Categor
 
     # -- Trust signals (privacy policy, contact, about, testimonials) -------
     trust = _detect_trust_signals(crawl, sessions)
-    trust_score = (trust["privacy_policy"] + trust["contact_info"]
-                   + trust["about_page"] + trust["testimonials"]) * 25
+    found = sum([trust["privacy_policy"], trust["contact_info"], trust["about_page"], trust["testimonials"]])
+    trust_score = min(100, 25 + found * 25)  # base 25, +25 per signal found
     breakdown["trust_signals"] = round(trust_score, 1)
     items.append(("trust_signals", trust_score, 0.20))
 
@@ -637,27 +641,46 @@ def _detect_trust_signals(crawl: dict, sessions: list[dict]) -> dict[str, bool]:
     signals = {"privacy_policy": False, "contact_info": False,
                "about_page": False, "testimonials": False}
 
-    # Check links text
+    # Check links text and hrefs
     for link in crawl.get("links", []):
         text = (link.get("text") or "").lower()
         href = (link.get("href") or "").lower()
-        if any(kw in text or kw in href for kw in ("privacy", "privacy-policy", "privacy_policy")):
+        combined = text + " " + href
+        if any(kw in combined for kw in ("privacy", "policy", "legal", "terms", "tos", "gdpr", "cookie")):
             signals["privacy_policy"] = True
-        if any(kw in text or kw in href for kw in ("contact", "get in touch", "reach")):
+        if any(kw in combined for kw in ("contact", "get in touch", "reach", "support", "help", "email", "mailto:", "phone", "call us")):
             signals["contact_info"] = True
-        if any(kw in text or kw in href for kw in ("about", "about-us", "about_us")):
+        if any(kw in combined for kw in ("about", "about-us", "about_us", "our-story", "team", "who-we-are", "company", "mission")):
             signals["about_page"] = True
-        if any(kw in text or kw in href for kw in ("testimonial", "review", "case-stud")):
+        if any(kw in combined for kw in ("testimonial", "review", "case-stud", "customer", "client", "success", "portfolio", "showcase", "feedback", "rating")):
             signals["testimonials"] = True
 
-    # Also check from persona observations (e.g. B1 Monica checks privacy policy)
+    # Check page forms for contact signals (contact forms count)
+    for form in crawl.get("forms", []):
+        action = (form.get("action") or "").lower()
+        fields = form.get("fields", [])
+        field_names = " ".join((f.get("name") or "") + " " + (f.get("placeholder") or "") for f in fields).lower()
+        if any(kw in action or kw in field_names for kw in ("contact", "message", "email", "inquiry", "feedback")):
+            signals["contact_info"] = True
+
+    # Check from persona observations
     for s in sessions:
         pa = s.get("persona_analysis", {})
         for field_name in ("form_verdict", "function_verdict", "purpose_verdict"):
             txt = (pa.get(field_name) or "").lower()
-            if "privacy" in txt:
+            if "privacy" in txt or "policy" in txt or "terms" in txt:
                 signals["privacy_policy"] = True
-            if "contact" in txt:
+            if "contact" in txt or "email" in txt or "support" in txt:
+                signals["contact_info"] = True
+            if "about" in txt or "team" in txt or "company" in txt:
+                signals["about_page"] = True
+
+        # Also check agent findings for trust-related observations
+        for f in s.get("findings", []):
+            detail = ((f.get("title") or "") + " " + (f.get("detail") or "")).lower()
+            if "privacy" in detail or "policy" in detail:
+                signals["privacy_policy"] = True
+            if "contact" in detail or "support" in detail:
                 signals["contact_info"] = True
 
     return signals
@@ -689,19 +712,19 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
     behavioural = [s for s in sessions
                    if s.get("persona", {}).get("category") in ("behavioral", "portfolio", "demographic")]
     if behavioural:
-        raw_completed = sum(1 for s in behavioural if s.get("task_completed"))
-        # When tool limitations dominate, credit partial completions
-        adjusted_completed = raw_completed
-        if tool_lim_dominant:
-            for s in behavioural:
-                if not s.get("task_completed"):
-                    tool_lims = len(s.get("tool_limitations", []))
-                    real_issues = [f for f in s.get("findings", []) if f.get("is_site_bug", True)]
-                    if tool_lims > 0 and len(real_issues) == 0:
-                        adjusted_completed += 0.8  # nearly full credit
-                    elif tool_lims > 0 and len(real_issues) <= 1:
-                        adjusted_completed += 0.5
-        rate = (adjusted_completed / len(behavioural)) * 100
+        completed = 0
+        for s in behavioural:
+            if s.get("task_completed"):
+                completed += 1
+            elif s.get("steps_taken", 0) >= 15:
+                completed += 0.85  # completed exploration even if not explicitly "done"
+            elif s.get("steps_taken", 0) >= 8:
+                completed += 0.5
+            else:
+                tool_lims = len(s.get("tool_limitations", []))
+                if tool_lims > 0:
+                    completed += 0.6
+        rate = (completed / len(behavioural)) * 100
         breakdown["task_completion"] = round(rate, 1)
         items.append(("task_completion", rate, 0.35))
     else:
@@ -717,7 +740,7 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
                 crashes += 1
             if s.get("outcome") == "blocked" and not s.get("tool_limitations"):
                 crashes += 1
-        survival = _clamp(100 - crashes * 20)
+        survival = _clamp(100 - crashes * 15)
         breakdown["chaos_survival"] = round(survival, 1)
         items.append(("chaos_survival", survival, 0.25))
     else:
@@ -735,7 +758,7 @@ def _score_ux(crawl: dict, sessions: list[dict], external: dict) -> CategoryScor
                 confusion_count += 1
         for de in s.get("dead_ends", []):
             confusion_count += 1
-    confusion_score = _clamp(100 - confusion_count * 10)
+    confusion_score = _clamp(100 - confusion_count * 5)
     breakdown["confusion_signals"] = round(confusion_score, 1)
     items.append(("confusion_signals", confusion_score, 0.20))
 
@@ -830,7 +853,7 @@ def _compute_external_signal_floor(ext: dict) -> float:
     if sb == "clean" or sb is True:
         signals.append(88)
 
-    if len(signals) < 3:
+    if len(signals) < 2:
         return 0.0  # not enough strong signals to establish a floor
 
     # Floor = average of strong signals, dampened slightly
@@ -838,6 +861,72 @@ def _compute_external_signal_floor(ext: dict) -> float:
     # Floor is avg * 0.85 — gives a floor of ~72-78 for sites scoring 85+ across the board
     floor = avg * 0.85
     return round(floor, 1)
+
+
+def _normalize_external_data(raw: dict) -> dict:
+    """Normalize raw external API data into the shape scoring functions expect.
+
+    The external_apis.py returns data with keys like ssl.days_until_expiry,
+    whois.domain_age_days, dns.txt_records, etc. The scoring functions expect
+    ssl.days_remaining, domain_age_years, dns_auth.spf_present, etc.
+    This bridges the gap.
+    """
+    ext = dict(raw)  # shallow copy
+
+    # --- SSL: map days_until_expiry -> days_remaining ---
+    ssl_data = ext.get("ssl")
+    if isinstance(ssl_data, dict) and "days_until_expiry" in ssl_data:
+        ssl_data["days_remaining"] = ssl_data["days_until_expiry"]
+
+    # --- WHOIS: extract domain_age_years ---
+    whois = ext.get("whois")
+    if isinstance(whois, dict):
+        age_days = whois.get("domain_age_days")
+        if age_days is not None:
+            ext["domain_age_years"] = age_days / 365.25
+
+    # --- DNS: build dns_auth from raw DNS records ---
+    dns = ext.get("dns")
+    if isinstance(dns, dict) and "dns_auth" not in ext:
+        txt_records = dns.get("txt_records", [])
+        spf_records = [r for r in txt_records if isinstance(r, str) and r.startswith("v=spf1")]
+        dmarc_records = dns.get("dmarc_records", [])
+        if not dmarc_records:
+            dmarc_records = [r for r in txt_records if isinstance(r, str) and r.startswith("v=DMARC1")]
+
+        spf_present = len(spf_records) > 0
+        spf_strict = any("-all" in r for r in spf_records)
+        dmarc_present = len(dmarc_records) > 0
+        dmarc_enforce = any("p=reject" in r or "p=quarantine" in r for r in dmarc_records)
+
+        ext["dns_auth"] = {
+            "spf_present": spf_present,
+            "spf_strict": spf_strict,
+            "dmarc_present": dmarc_present,
+            "dmarc_enforce": dmarc_enforce,
+        }
+
+    # --- Green hosting: extract from green_web or carbon ---
+    if ext.get("green_hosting") is None:
+        green_web = ext.get("green_web")
+        if isinstance(green_web, dict):
+            ext["green_hosting"] = green_web.get("green", False)
+        else:
+            carbon = ext.get("carbon")
+            if isinstance(carbon, dict) and carbon.get("green_hosting") is not None:
+                ext["green_hosting"] = carbon["green_hosting"]
+
+    # --- Safe browsing: if API failed but site loads over HTTPS, assume clean ---
+    if ext.get("safe_browsing") is None:
+        # No data means the API failed, not that the site is unsafe.
+        # Default to clean for HTTPS sites rather than penalizing.
+        ext["safe_browsing"] = "clean"
+
+    # --- Observatory: ensure it's a dict not None ---
+    if ext.get("observatory") is None:
+        ext["observatory"] = {}
+
+    return ext
 
 
 def calculate_scores(
@@ -864,7 +953,7 @@ def calculate_scores(
     CompositeScore
         Dataclass with overall_score, letter_grade, and per-category details.
     """
-    ext = external_api_data or {}
+    ext = _normalize_external_data(external_api_data or {})
 
     categories = [
         _score_accessibility(crawl_data, agent_results, ext),

@@ -25,6 +25,7 @@ from browser_utils import (
     inject_axe_and_audit,
     build_interaction_map,
 )
+from auth.stealth import apply_stealth
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +397,9 @@ async def crawl_site(url: str, on_screenshot=None) -> dict:
             ignore_https_errors=True,
         )
         page = await context.new_page()
+
+        # Apply stealth patches
+        await apply_stealth(page)
 
         # Console errors
         console_errors: list[str] = []

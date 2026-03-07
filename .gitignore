@@ -58,3 +58,11 @@ backend/.env
 # python
 __pycache__/
 *.pyc
+
+# auth profiles (saved browser sessions)
+backend/auth_profiles/
+auth_profiles/
+
+# accidental artifacts
+backend/.next/
+backend/=1.30.0

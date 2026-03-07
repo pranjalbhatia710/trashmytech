@@ -19,10 +19,11 @@ BACKEND_DIR = pathlib.Path(__file__).parent
 agent_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
-        "google-genai",
+        "openai",
         "playwright",
         "Pillow",
         "aiohttp",
+        "playwright-stealth",
     )
     .run_commands(
         "playwright install chromium",

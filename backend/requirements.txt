@@ -2,7 +2,7 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 websockets==14.2
 playwright==1.49.1
-google-genai>=1.0.0
+openai>=1.30.0
 Pillow==11.1.0
 modal==0.73.45
 python-dotenv==1.0.1
@@ -15,4 +15,5 @@ asyncpg>=0.29.0
 pydantic>=2.0.0
 upstash-redis>=1.0.0
 redis>=5.0.0
-# embeddings use google-genai (already listed above)
+# embeddings use openai (already listed above)
+playwright-stealth>=1.0.6

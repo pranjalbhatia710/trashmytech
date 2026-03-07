@@ -15,5 +15,5 @@ CREATE TABLE IF NOT EXISTS issues (
     screenshot      TEXT,
     issue_category  TEXT,
     seo_impact      TEXT,
-    embedding       vector(768)
+    embedding       vector(1536)
 );

@@ -1,12 +1,12 @@
 """
-annotator.py — Annotate screenshots with Gemini bounding boxes
+annotator.py — Annotate screenshots with GPT-5.2 bounding boxes
 
-Uses Gemini 3 Flash's vision to mark:
+Uses OpenAI GPT-5.2 vision to mark:
 - RED boxes: Elements with problems (too small, missing labels, broken)
 - GREEN boxes: Elements that work well (good contrast, proper size, accessible)
 - YELLOW boxes: Warnings
 
-Gemini returns coordinates normalized to 0-1000. We convert to pixels and
+Model returns coordinates normalized to 0-1000. We convert to pixels and
 draw with Pillow.
 """
 
@@ -17,10 +17,9 @@ import base64
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
-ANNOTATION_MODEL = "gemini-2.5-flash"
+ANNOTATION_MODEL = "gpt-5.2"
 
 ANNOTATION_PROMPT = """You are a UX auditor annotating a screenshot of a website.
 
@@ -79,7 +78,7 @@ _annotation_semaphore = asyncio.Semaphore(1)
 
 
 def _get_client():
-    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 def _load_font(size: int):
@@ -222,35 +221,45 @@ async def annotate_screenshot(
     async with _annotation_semaphore:
         try:
             client = _get_client()
+            img_b64_url = f"data:image/jpeg;base64,{screenshot_b64}"
             response = await asyncio.to_thread(
-                client.models.generate_content,
+                client.chat.completions.create,
                 model=ANNOTATION_MODEL,
-                contents=[
-                    types.Part.from_text(
-                        f"{ANNOTATION_PROMPT}\n\nPage: {page_url}\n\nFindings:\n{findings_text}"
-                    ),
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"{ANNOTATION_PROMPT}\n\nPage: {page_url}\n\nFindings:\n{findings_text}",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": img_b64_url, "detail": "high"},
+                            },
+                        ],
+                    }
                 ],
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                    max_output_tokens=1500,
-                ),
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_completion_tokens=1500,
             )
 
-            raw = response.text.strip()
+            raw = response.choices[0].message.content.strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[-1]
                 if raw.endswith("```"):
                     raw = raw[:-3]
                 raw = raw.strip()
 
-            annotations = json.loads(raw)
+            parsed = json.loads(raw)
+            # Handle both {"annotations": [...]} and bare [...]
+            annotations = parsed if isinstance(parsed, list) else parsed.get("annotations", [])
             if not isinstance(annotations, list):
                 return screenshot_b64
 
             # Rate limit
-            await asyncio.sleep(6)
+            await asyncio.sleep(2)
 
         except Exception as e:
             print(f"Annotation failed: {e}")

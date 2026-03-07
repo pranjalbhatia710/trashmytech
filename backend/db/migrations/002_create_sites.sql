@@ -16,5 +16,5 @@ CREATE TABLE IF NOT EXISTS sites (
     latest_security_score       FLOAT,
     latest_content_score        FLOAT,
     latest_ux_score             FLOAT,
-    embedding                   vector(768)
+    embedding                   vector(1536)
 );

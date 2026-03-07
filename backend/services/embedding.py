@@ -1,8 +1,8 @@
-"""Gemini embedding generation for sites and issues.
+"""OpenAI embedding generation for sites and issues.
 
 Embedding generation is non-blocking -- if it fails the error is logged but
 the calling code continues normally.  Uses batch embedding for efficiency.
-Uses Google Gemini text-embedding-004 (768 dimensions) via the Generative AI SDK.
+Uses OpenAI text-embedding-3-small (1536 dimensions).
 """
 
 from __future__ import annotations
@@ -18,26 +18,26 @@ _client = None
 
 
 def _get_client():
-    """Lazily initialise the Gemini client."""
+    """Lazily initialise the OpenAI client."""
     global _client
     if _client is not None:
         return _client
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        log.warning("GEMINI_API_KEY not set -- embedding generation disabled")
+        log.warning("OPENAI_API_KEY not set -- embedding generation disabled")
         return None
 
     try:
-        from google import genai  # type: ignore
-        _client = genai.Client(api_key=api_key)
-        log.info("Gemini client initialised for embeddings")
+        from openai import OpenAI
+        _client = OpenAI(api_key=api_key)
+        log.info("OpenAI client initialised for embeddings")
         return _client
     except ImportError:
-        log.warning("google-genai package not installed -- embedding generation disabled")
+        log.warning("openai package not installed -- embedding generation disabled")
         return None
     except Exception:
-        log.exception("Failed to initialise Gemini client")
+        log.exception("Failed to initialise OpenAI client")
         return None
 
 
@@ -45,9 +45,9 @@ def _get_client():
 # Core embedding function
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL = "text-embedding-004"
-EMBEDDING_DIM = 768
-MAX_BATCH_SIZE = 100  # Gemini batch limit
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 1536
+MAX_BATCH_SIZE = 2048  # OpenAI batch limit
 
 
 def is_available() -> bool:
@@ -59,7 +59,7 @@ async def generate_embeddings(texts: list[str]) -> list[Optional[list[float]]]:
     """Generate embeddings for a list of texts using Gemini.
 
     Returns a list of the same length as `texts`.  Each element is either
-    a 768-dim float list or None if that particular text failed.
+    a 1536-dim float list or None if that particular text failed.
 
     Uses batch embedding and handles rate limits with exponential backoff.
     """
@@ -90,13 +90,13 @@ async def generate_embeddings(texts: list[str]) -> list[Optional[list[float]]]:
         for attempt in range(3):
             try:
                 response = await asyncio.to_thread(
-                    client.models.embed_content,
+                    client.embeddings.create,
                     model=EMBEDDING_MODEL,
-                    contents=cleaned,
+                    input=cleaned,
                 )
-                for i, emb in enumerate(response.embeddings):
+                for i, emb_obj in enumerate(response.data):
                     idx = batch_start + i
-                    results[idx] = list(emb.values)
+                    results[idx] = emb_obj.embedding
                 log.info(
                     "Generated %d embeddings (batch %d-%d)",
                     len(batch), batch_start, batch_start + len(batch),

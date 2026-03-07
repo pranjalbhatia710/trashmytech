@@ -24,6 +24,9 @@ from browser_utils import (
     FailureType,
     InteractiveElement,
 )
+from auth.stealth import apply_stealth
+from auth.auth_manager import load_storage_state, save_storage_state
+from auth.captcha_solver import detect_and_solve_captcha
 
 # ---------------------------------------------------------------------------
 # System prompt template
@@ -526,22 +529,22 @@ def _build_behavioral_rules(persona: dict) -> str:
 # ---------------------------------------------------------------------------
 
 async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
-    from google.genai.types import GenerateContentConfig
     try:
-        full_prompt = system_prompt + "\n\n" + user_prompt
         response = await asyncio.wait_for(
             asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-2.5-flash",
-                contents=full_prompt,
-                config=GenerateContentConfig(
-                    temperature=0.6,
-                    max_output_tokens=500,
-                ),
+                client.chat.completions.create,
+                model="gpt-5.2",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.6,
+                max_completion_tokens=500,
             ),
             timeout=45,
         )
-        raw = response.text.strip()
+        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             if raw.endswith("```"):
@@ -961,11 +964,22 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
         ]
         ua = random.choice(user_agents)
+        # Load auth profile storage state if provided
+        auth_profile = site_context.get("auth_profile")
+        auth_storage_state = None
+        if auth_profile:
+            # Check for inline state first (Modal dispatch), then file-based
+            auth_storage_state = site_context.get("auth_storage_state") or load_storage_state(auth_profile)
+
         context = await browser.new_context(
             viewport=viewport,
             user_agent=ua,
+            storage_state=auth_storage_state if auth_storage_state else None,
         )
         page = await context.new_page()
+
+        # Apply stealth patches to avoid bot detection
+        await apply_stealth(page)
 
         # Collect console errors
         console_errors: list[str] = []
@@ -979,6 +993,14 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await wait_for_interactive(page, timeout_ms=8000)
+
+            # Detect and solve captchas after initial navigation
+            captcha_result = await detect_and_solve_captcha(page)
+            if captcha_result.get("detected"):
+                if captcha_result.get("solved"):
+                    await page.wait_for_timeout(2000)  # Wait for page to process token
+                all_errors.append(f"Captcha detected ({captcha_result.get('type', 'unknown')}): {'solved' if captcha_result.get('solved') else captcha_result.get('error', 'failed')}")
+
             await _inject_overlays(page, headed, persona)
         except Exception as e:
             all_errors.append(f"Navigation failed: {str(e)[:200]}")
@@ -1068,6 +1090,11 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
 
             # Execute action with smart clicking
             exec_result = await _execute_action(page, decision, persona, elements, headed)
+
+            # Check for captchas that appeared after action
+            post_captcha = await detect_and_solve_captcha(page)
+            if post_captcha.get("detected") and post_captcha.get("solved"):
+                await page.wait_for_timeout(2000)
 
             # Track action history for dedup
             action_summary = f"Step {step_num+1}: {decision.get('action')} → '{decision.get('target', '')[:50]}'"
@@ -1211,6 +1238,13 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
     except Exception:
         all_errors.append(f"Agent crash: {traceback.format_exc()[:500]}")
     finally:
+        # Save updated auth state back to profile
+        if auth_profile and not site_context.get("auth_storage_state"):
+            try:
+                updated_state = await context.storage_state()
+                save_storage_state(auth_profile, updated_state, url)
+            except Exception:
+                pass
         # Always close the context we created
         try:
             await context.close()
@@ -1249,8 +1283,7 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
 
 
 async def _generate_persona_analysis(client, persona: dict, result: dict, url: str) -> dict:
-    """Use Gemini Pro to generate a rich, opinionated analysis from this persona's perspective."""
-    from google.genai.types import GenerateContentConfig
+    """Use GPT-5.2 to generate a rich, opinionated analysis from this persona's perspective."""
 
     name = persona.get("name", "Unknown")
     age = persona.get("age")
@@ -1316,17 +1349,18 @@ Return ONLY valid JSON:
     try:
         response = await asyncio.wait_for(
             asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-2.5-pro",
-                contents=prompt,
-                config=GenerateContentConfig(
-                    temperature=0.7,
-                    max_output_tokens=800,
-                ),
+                client.chat.completions.create,
+                model="gpt-5.2",
+                messages=[
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                max_completion_tokens=800,
             ),
             timeout=60,
         )
-        raw = response.text.strip()
+        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             if raw.endswith("```"):
@@ -1408,11 +1442,11 @@ def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
 
 async def run_agent_local(url: str, persona: dict, site_context: dict,
                           on_step_screenshot=None, shared_browser=None) -> dict:
-    from google import genai
-    api_key = os.environ.get("GEMINI_API_KEY")
+    from openai import OpenAI
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
-    client = genai.Client(api_key=api_key)
+        return _make_result(persona, [], ["OPENAI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
+    client = OpenAI(api_key=api_key)
     return await _agent_loop(url, persona, site_context, client,
                              on_step_screenshot=on_step_screenshot,
                              shared_browser=shared_browser)

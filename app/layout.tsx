@@ -1,24 +1,18 @@
 import type { Metadata } from "next";
-import { Instrument_Sans, Source_Serif_4, IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ClientProviders } from "./providers";
 
-const instrumentSans = Instrument_Sans({
+const plexSans = IBM_Plex_Sans({
   variable: "--font-display",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
-const sourceSerif = Source_Serif_4({
-  variable: "--font-body",
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
   subsets: ["latin"],
   weight: ["400", "500", "600"],
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
@@ -35,8 +29,8 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${instrumentSans.variable} ${sourceSerif.variable} ${ibmPlexMono.variable} antialiased`}
-        style={{ backgroundColor: "#0a0a0c", color: "#e8e6e3" }}
+        className={`${plexSans.variable} ${ibmPlexMono.variable} antialiased`}
+        style={{ backgroundColor: "#0d0f12", color: "#f1f3f5" }}
       >
         <ClientProviders>
           {children}

@@ -303,20 +303,20 @@ export default function Home() {
       <motion.div
         className="fixed inset-0 z-0"
         initial={{ opacity: 0 }}
-        animate={{ opacity: bgReady ? 0.55 : 0 }}
+        animate={{ opacity: bgReady ? 0.85 : 0 }}
         transition={{ duration: 2.5, ease: "easeOut" }}
       >
         <PrismaticBurst
           animationType="rotate3d"
-          intensity={1.4}
-          speed={0.35}
+          intensity={2.2}
+          speed={0.4}
           distort={0}
           paused={false}
           offset={{ x: 0, y: 0 }}
           hoverDampness={0.25}
           rayCount={0}
-          mixBlendMode="lighten"
-          colors={["#e8a44a", "#d4781a", "#f0b45a"]}
+          mixBlendMode="screen"
+          colors={["#e8a44a", "#c4621a", "#f0b45a"]}
         />
       </motion.div>
 
@@ -327,13 +327,13 @@ export default function Home() {
         animate={{ opacity: bgReady ? 1 : 0 }}
         transition={{ duration: 1.8, ease: "easeOut" }}
       >
-        <NeuralBackground color="#e8a44a" trailOpacity={0.015} particleCount={350} speed={0.6} intensity={0.25} formWord={formWord} />
+        <NeuralBackground color="#e8a44a" trailOpacity={0.012} particleCount={400} speed={0.7} intensity={0.5} formWord={formWord} />
       </motion.div>
 
       <div
         className="fixed inset-0 z-[2] pointer-events-none"
         style={{
-          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.3) 30%, rgba(8,9,13,0.85) 100%)",
+          background: "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.15) 35%, rgba(8,9,13,0.7) 100%)",
         }}
       />
 

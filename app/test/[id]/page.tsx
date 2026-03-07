@@ -10,6 +10,10 @@ const NeuralBackground = dynamic(
   () => import("@/components/ui/flow-field-background"),
   { ssr: false }
 );
+const PrismaticBurst = dynamic(
+  () => import("@/components/ui/prismatic-burst"),
+  { ssr: false }
+);
 import { useScene } from "@/components/three/SceneContext";
 import CounterLoader from "@/components/ui/counter-loader";
 import { LiveBrowserViewer } from "@/components/ui/live-browser-viewer";
@@ -530,23 +534,42 @@ export default function TestPage() {
 
   return (
     <div className="min-h-screen relative" style={{ backgroundColor: "var(--bg-base)" }}>
-      {/* Background */}
+      {/* Prismatic burst — immersive shader base */}
       <motion.div
         className="fixed inset-0 z-0"
-        animate={{ opacity: phase === "reporting" ? 0.85 : phase === "swarming" ? 0.6 : 0.5 }}
+        animate={{ opacity: phase === "reporting" ? 0.9 : phase === "swarming" ? 0.7 : 0.5 }}
+        transition={{ duration: 2.5 }}
+      >
+        <PrismaticBurst
+          animationType="rotate3d"
+          intensity={phase === "reporting" ? 2.5 : phase === "swarming" ? 1.8 : 1.4}
+          speed={phase === "swarming" ? 0.6 : 0.35}
+          distort={0}
+          paused={false}
+          offset={{ x: 0, y: 0 }}
+          hoverDampness={0.3}
+          rayCount={0}
+          mixBlendMode="screen"
+          colors={["#e8a44a", "#c4621a", "#f0b45a"]}
+        />
+      </motion.div>
+      {/* Particle flow field — interactive layer */}
+      <motion.div
+        className="fixed inset-0 z-[1]"
+        animate={{ opacity: phase === "reporting" ? 0.9 : phase === "swarming" ? 0.7 : 0.6 }}
         transition={{ duration: 2 }}
       >
         <NeuralBackground
           color="#e8a44a"
-          trailOpacity={0.03}
-          particleCount={600}
+          trailOpacity={0.02}
+          particleCount={500}
           speed={0.8}
           intensity={
-            phase === "connecting" ? 0.3 :
-              phase === "crawling" ? 0.5 :
-                phase === "swarming" ? 0.8 :
+            phase === "connecting" ? 0.4 :
+              phase === "crawling" ? 0.6 :
+                phase === "swarming" ? 0.9 :
                   phase === "reporting" ? 1.0 :
-                    0.4
+                    0.5
           }
           orbit={phase === "reporting"}
           formWord={formWord}
@@ -554,13 +577,13 @@ export default function TestPage() {
         />
       </motion.div>
       <motion.div
-        className="fixed inset-0 z-[1] pointer-events-none"
+        className="fixed inset-0 z-[2] pointer-events-none"
         animate={{
           background: phase === "reporting"
-            ? "radial-gradient(ellipse at 50% 45%, transparent 0%, rgba(10,10,12,0.05) 40%, rgba(10,10,12,0.4) 100%)"
+            ? "radial-gradient(ellipse at 50% 45%, transparent 0%, rgba(8,9,13,0.05) 40%, rgba(8,9,13,0.35) 100%)"
             : phase === "swarming"
-              ? "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.15) 45%, rgba(10,10,12,0.65) 100%)"
-              : "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(10,10,12,0.2) 45%, rgba(10,10,12,0.7) 100%)",
+              ? "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.1) 45%, rgba(8,9,13,0.55) 100%)"
+              : "radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(8,9,13,0.15) 45%, rgba(8,9,13,0.6) 100%)",
         }}
         transition={{ duration: 2 }}
       />

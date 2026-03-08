@@ -570,24 +570,27 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
             _ws_closed = True
 
     try:
-        # Phase 1: Crawl
+        # Start crawl and swarm together so agents begin immediately after connect.
         test["status"] = "crawling"
         _log_event("info", f"[{test_id[:8]}] crawl started for {url}")
-        crawl_data = await run_crawl(url, send)
-        test["crawl_data"] = crawl_data
-        _log_event("info", f"[{test_id[:8]}] crawl complete")
+        crawl_task = asyncio.create_task(run_crawl(url, send))
 
-        # External APIs (run in background during swarming)
+        # External APIs also run in parallel with the live test.
         ext_task = asyncio.create_task(run_all_external_apis(url))
 
-        # Phase 2: Swarm
         test["status"] = "swarming"
         _log_event("info", f"[{test_id[:8]}] swarming {AGENT_COUNT} agents")
-        agent_results = await run_swarm(
-            url, crawl_data, AGENT_COUNT, send,
-            auth_profile=test.get("auth_profile"),
+        swarm_task = asyncio.create_task(
+            run_swarm(
+                url, {}, AGENT_COUNT, send,
+                auth_profile=test.get("auth_profile"),
+            )
         )
+
+        crawl_data, agent_results = await asyncio.gather(crawl_task, swarm_task)
+        test["crawl_data"] = crawl_data
         test["agent_results"] = agent_results
+        _log_event("info", f"[{test_id[:8]}] crawl complete")
         _log_event("info", f"[{test_id[:8]}] swarming complete")
 
         # Collect external API results

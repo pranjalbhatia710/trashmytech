@@ -29,9 +29,10 @@ import {
 import {
   Shield, Eye, Smartphone, Gauge, Users, AlertTriangle, Bot, Check, X,
   CheckCircle2, XCircle, ChevronDown, ExternalLink, Copy, Sparkles,
-  ArrowRight, BarChart3, Zap, TrendingUp, FileText,
+  ArrowRight, BarChart3, Zap, TrendingUp, FileText, DollarSign,
 } from "lucide-react";
 import { DEMO_AGENTS, DEMO_REPORT, DEMO_CRAWL_DATA, DEMO_LOGS, DEMO_URL } from "@/lib/demo-data";
+import { EBAY_AGENTS, EBAY_REPORT, EBAY_CRAWL_DATA, EBAY_LOGS, EBAY_URL } from "@/lib/ebay-demo-data";
 
 // ── Types ──────────────────────────────────────────────────────
 type Phase = "connecting" | "crawling" | "swarming" | "reporting" | "done";
@@ -269,7 +270,9 @@ export default function TestPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const testId = params.id as string;
-  const testUrl = testId === "demo" ? DEMO_URL : (searchParams.get("url") || "");
+  const isEbayDemo = testId === "ebay";
+  const isDemo = testId === "demo" || isEbayDemo;
+  const testUrl = isEbayDemo ? EBAY_URL : testId === "demo" ? DEMO_URL : (searchParams.get("url") || "");
 
   const [phase, setPhase] = useState<Phase>("connecting");
   const [agents, setAgents] = useState<Map<string, AgentData>>(new Map());
@@ -330,27 +333,34 @@ export default function TestPage() {
     return () => clearInterval(interval);
   }, [phase]);
 
-  // Demo mode
+  // Demo mode (demo + ebay)
   useEffect(() => {
-    if (testId !== "demo") return;
+    if (!isDemo) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const demoAgents: any[] = isEbayDemo ? [...EBAY_AGENTS] : DEMO_AGENTS;
+    const demoReport = isEbayDemo ? EBAY_REPORT : DEMO_REPORT;
+    const demoCrawl = isEbayDemo ? EBAY_CRAWL_DATA : DEMO_CRAWL_DATA;
+    const demoLogs = isEbayDemo ? EBAY_LOGS : DEMO_LOGS;
+
     const agentMap = new Map<string, AgentData>();
-    for (const a of DEMO_AGENTS) {
+    for (const a of demoAgents) {
       agentMap.set(a.id, a as AgentData);
     }
     setAgents(agentMap);
-    setSelectedAgentId(DEMO_AGENTS[0].id);
-    setCrawlData(DEMO_CRAWL_DATA);
-    setReport(DEMO_REPORT as unknown as Report);
-    setLogs([...DEMO_LOGS]);
-    setDoneCount(DEMO_AGENTS.length);
-    setIssueCount(DEMO_AGENTS.reduce((sum, a) => sum + a.issuesFound, 0));
-    setElapsed(51);
+    setSelectedAgentId(demoAgents[0].id);
+    setCrawlData(demoCrawl);
+    setReport(demoReport as unknown as Report);
+    setLogs([...demoLogs]);
+    setDoneCount(demoAgents.length);
+    setIssueCount(demoAgents.reduce((sum: number, a: { issuesFound: number }) => sum + a.issuesFound, 0));
+    setElapsed(isEbayDemo ? 85 : 51);
     setPhase("done");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testId]);
 
   // WebSocket
   useEffect(() => {
-    if (testId === "demo") return;
+    if (isDemo) return;
     const wsUrl = `${WS_URL}/ws/${testId}`;
     const ws = new WebSocket(wsUrl);
 
@@ -523,6 +533,10 @@ export default function TestPage() {
     const order = { running: 0, blocked: 1, stuck: 2, complete: 3, waiting: 4 };
     return (order[a.status] ?? 5) - (order[b.status] ?? 5);
   });
+  const runningAgents = sortedAgents.filter((agent) => agent.status === "running");
+  const completedAgents = sortedAgents.filter((agent) => agent.status === "complete");
+  const focusedAgentId = selectedAgentId ?? runningAgents[0]?.id ?? sortedAgents[0]?.id ?? null;
+  const focusedAgent = focusedAgentId ? agents.get(focusedAgentId) ?? null : null;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -654,7 +668,7 @@ export default function TestPage() {
 
       <main className="px-4 sm:px-6 py-6 relative z-10" style={{ backgroundColor: "rgba(8,9,13,0.75)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
         {/* URL banner */}
-        <div className="max-w-[760px] mx-auto mb-6">
+        <div className="max-w-[1180px] mx-auto mb-6">
           <div
             className="glass-card flex items-center gap-3 px-4 py-2.5 text-[12px]"
             style={{ borderRadius: "10px", fontFamily: "var(--font-mono)" }}
@@ -673,7 +687,7 @@ export default function TestPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="max-w-[760px] mx-auto"
+            className={`${phase === "swarming" ? "max-w-[1180px]" : "max-w-[760px]"} mx-auto`}
           >
             {/* Crawl intel */}
             {crawlData && (
@@ -727,7 +741,15 @@ export default function TestPage() {
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                  {phase === "connecting" ? "Connecting..." : phase === "crawling" ? "Scanning site..." : phase === "reporting" ? "Writing report..." : `${sortedAgents.filter(a => a.status === "running").length} agents active`}
+                  {phase === "connecting"
+                    ? "Connecting..."
+                    : phase === "crawling"
+                      ? "Scanning site..."
+                      : phase === "reporting"
+                        ? "Writing report..."
+                        : crawlData
+                          ? `${runningAgents.length} agents active`
+                          : `${runningAgents.length} agents active while crawl finishes`}
                 </span>
                 <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
                   {doneCount}/{totalAgents}
@@ -757,233 +779,272 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Live Browser Viewer - swarming */}
-            {phase === "swarming" && selectedAgent && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)" }} />
-                    <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>
-                      Watching <strong style={{ color: "var(--text-primary)" }}>{selectedAgent.name}</strong>
-                    </span>
-                  </div>
-                  <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                    step {liveScreenshots.get(selectedAgent.id)?.step || 0}
-                  </span>
-                </div>
-                <LiveBrowserViewer
-                  screenshot={liveScreenshots.get(selectedAgent.id)?.b64}
-                  fallbackScreenshot={crawlScreenshot ?? undefined}
-                  agentName={selectedAgent.name}
-                  step={liveScreenshots.get(selectedAgent.id)?.step}
-                  url={testUrl}
-                  annotated={annotatedScreenshots.has(selectedAgent.id)}
-                />
-              </motion.div>
-            )}
+            {phase === "swarming" && (
+              <div className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] items-start">
+                <div className="min-w-0">
+                  {focusedAgent && (
+                    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)" }} />
+                          <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-secondary)" }}>
+                            Watching <strong style={{ color: "var(--text-primary)" }}>{focusedAgent.name}</strong>
+                          </span>
+                        </div>
+                        <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                          step {liveScreenshots.get(focusedAgent.id)?.step || 0}
+                        </span>
+                      </div>
+                      <LiveBrowserViewer
+                        screenshot={liveScreenshots.get(focusedAgent.id)?.b64}
+                        fallbackScreenshot={crawlScreenshot ?? undefined}
+                        agentName={focusedAgent.name}
+                        step={liveScreenshots.get(focusedAgent.id)?.step}
+                        url={testUrl}
+                        annotated={annotatedScreenshots.has(focusedAgent.id)}
+                      />
+                    </motion.div>
+                  )}
 
-            {/* Agent grid - enhanced with red pulse for critical findings */}
-            {(phase === "swarming" || phase === "crawling") && sortedAgents.length > 0 && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                    Agents
-                  </span>
-                  <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                    {sortedAgents.filter(a => a.status === "running").length} active / {sortedAgents.filter(a => a.status === "complete").length} done
-                  </span>
-                </div>
+                  {!crawlData && (
+                    <div
+                      className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[10px]"
+                      style={{
+                        backgroundColor: "rgba(232,164,74,0.05)",
+                        border: "1px solid rgba(232,164,74,0.12)",
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      <Sparkles size={11} style={{ color: "var(--accent)" }} />
+                      Crawl is still mapping the site while the swarm is already running.
+                    </div>
+                  )}
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5">
-                  <AnimatePresence mode="popLayout">
-                    {sortedAgents.map((agent, idx) => {
-                      const hasCriticalFinding = agent.findings.some(f => f.type === "critical" || f.category === "security");
-                      return (
-                        <motion.div
-                          key={agent.id}
-                          layout
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                            boxShadow: hasCriticalFinding && agent.status === "complete"
-                              ? ["0 0 0 rgba(239,68,68,0)", "0 0 16px rgba(239,68,68,0.3)", "0 0 0 rgba(239,68,68,0)"]
-                              : "none",
-                          }}
-                          exit={{ opacity: 0 }}
-                          transition={{
-                            delay: idx * 0.02,
-                            duration: 0.3,
-                            boxShadow: hasCriticalFinding ? { repeat: 2, duration: 1.5 } : undefined,
-                          }}
-                          onClick={() => setSelectedAgentId(agent.id)}
-                          className="group cursor-pointer relative overflow-hidden rounded-lg px-3 py-2.5 transition-all duration-200"
-                          style={{
-                            backgroundColor: selectedAgentId === agent.id ? "rgba(232,164,74,0.06)" : "var(--bg-surface)",
-                            border: `1px solid ${agent.status === "blocked" ? "rgba(248,113,113,0.25)" :
-                                selectedAgentId === agent.id ? "rgba(232,164,74,0.2)" :
-                                  "var(--border-default)"
-                              }`,
-                          }}
-                        >
-                          <div className="flex items-center gap-2 mb-1.5">
+                  <AnimatePresence>
+                    {selectedAgent && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mb-6 overflow-hidden"
+                      >
+                        <div className="overflow-hidden rounded-xl" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid rgba(232,164,74,0.12)" }}>
+                          <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-default)" }}>
                             <div
-                              className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0"
-                              style={{
-                                backgroundColor: `${catColor(agent.category)}12`,
-                                color: catColor(agent.category),
-                                fontFamily: "var(--font-display)",
-                                border: `1px solid ${catColor(agent.category)}25`,
-                              }}
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                              style={{ backgroundColor: `${catColor(selectedAgent.category)}15`, color: catColor(selectedAgent.category), fontFamily: "var(--font-display)" }}
                             >
-                              {initials(agent.name)}
+                              {initials(selectedAgent.name)}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-[11px] font-semibold truncate" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                                {agent.name.split(" ")[0]}
+                              <div className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                                {selectedAgent.name}{selectedAgent.age ? `, ${selectedAgent.age}` : ""}
+                              </div>
+                              <div className="text-[11px] leading-snug" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                                {selectedAgent.description}
                               </div>
                             </div>
-                            <div className="relative shrink-0">
-                              {agent.status === "complete" && agent.outcome === "completed" ? (
-                                <Check size={11} style={{ color: "var(--status-pass)" }} />
-                              ) : agent.status === "blocked" ? (
-                                <X size={11} style={{ color: "var(--status-fail)" }} />
+                            <button onClick={() => setSelectedAgentId(null)} className="text-[10px] px-2 py-1 rounded cursor-pointer" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", backgroundColor: "var(--bg-elevated)" }}>
+                              close
+                            </button>
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-0">
+                            <div className="p-3 max-h-[240px] overflow-y-auto" style={{ borderRight: "1px solid var(--border-default)" }}>
+                              <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Trace</div>
+                              {selectedAgent.steps.length === 0 && selectedAgent.status === "running" && (
+                                <div className="mb-2 text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                                  Live frames are streaming now. Full step trace lands as soon as this agent finishes.
+                                </div>
+                              )}
+                              <div className="space-y-0.5">
+                                {selectedAgent.steps.map((step) => (
+                                  <motion.div
+                                    key={step.step}
+                                    initial={{ opacity: 0, x: -4 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    className="flex gap-2 text-[10px] py-0.5"
+                                  >
+                                    <span className="w-4 text-right shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{step.step}</span>
+                                    <span className="shrink-0 font-semibold" style={{
+                                      fontFamily: "var(--font-mono)",
+                                      color: step.result === "success" ? "var(--status-pass)" : "var(--status-fail)",
+                                    }}>
+                                      {step.action}
+                                    </span>
+                                    <span className="truncate" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{step.target}</span>
+                                  </motion.div>
+                                ))}
+                                {selectedAgent.status === "running" && (
+                                  <div className="flex gap-1 mt-2 ml-6">
+                                    {[0, 1, 2].map((i) => (
+                                      <div key={i} className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)", animationDelay: `${i * 200}ms` }} />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="p-3">
+                              <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Findings</div>
+                              {selectedAgent.findings.length > 0 ? (
+                                <div className="space-y-2">
+                                  {selectedAgent.findings.slice(0, 6).map((f, i) => (
+                                    <div key={i} className="rounded-lg p-2.5" style={{ backgroundColor: "var(--bg-elevated)", border: "1px solid var(--border-default)" }}>
+                                      <div className="flex items-center gap-2 mb-1.5">
+                                        <SeverityBadge severity={f.type} />
+                                        <span className="text-[10px] font-medium uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>{f.category}</span>
+                                      </div>
+                                      <div className="text-[11px] font-semibold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{f.title}</div>
+                                      <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{f.detail}</div>
+                                    </div>
+                                  ))}
+                                </div>
                               ) : (
-                                <>
-                                  <div className="w-1.5 h-1.5 rounded-full" style={{
-                                    backgroundColor:
-                                      agent.status === "running" ? "var(--status-pass)" :
-                                        agent.status === "complete" ? "var(--cat-accessibility)" :
-                                          agent.status === "stuck" ? "var(--status-warn)" : "var(--border-default)",
-                                  }} />
-                                  {agent.status === "running" && (
-                                    <div className="absolute inset-0 w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: "var(--status-pass)", opacity: 0.4 }} />
-                                  )}
-                                </>
+                                <div className="text-[10px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                                  {selectedAgent.status === "running" ? "No issues streamed yet." : "No issues recorded for this agent."}
+                                </div>
                               )}
                             </div>
                           </div>
-
-                          <div className="text-[9px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                            {agent.status === "running" ? (
-                              agent.steps.length > 0 ? `step ${agent.steps.length} · ${agent.steps[agent.steps.length - 1]?.action}` : "starting..."
-                            ) : agent.status === "complete" ? (
-                              <span style={{ color: agent.outcome === "blocked" ? "var(--status-fail)" : agent.outcome === "struggled" ? "var(--status-warn)" : "var(--cat-accessibility)" }}>
-                                {((agent.timeMs || 0) / 1000).toFixed(1)}s · {agent.issuesFound || 0} issues
-                              </span>
-                            ) : agent.status === "blocked" ? (
-                              <span style={{ color: "var(--status-fail)" }}>blocked</span>
-                            ) : (
-                              "queued"
-                            )}
-                          </div>
-
-                          <div className="absolute bottom-0 left-0 right-0 h-px" style={{
-                            backgroundColor: agent.status === "running" ? "var(--status-pass)" :
-                              agent.status === "complete" ? "var(--cat-accessibility)" :
-                                agent.status === "blocked" ? "var(--status-fail)" : "transparent",
-                            opacity: 0.4,
-                          }} />
-                        </motion.div>
-                      );
-                    })}
+                        </div>
+                      </motion.div>
+                    )}
                   </AnimatePresence>
                 </div>
-              </div>
-            )}
 
-            {/* Expanded agent detail panel */}
-            <AnimatePresence>
-              {selectedAgent && phase === "swarming" && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="mb-6 overflow-hidden"
-                >
-                  <div className="overflow-hidden rounded-xl" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid rgba(232,164,74,0.12)" }}>
-                    <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-default)" }}>
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-                        style={{ backgroundColor: `${catColor(selectedAgent.category)}15`, color: catColor(selectedAgent.category), fontFamily: "var(--font-display)" }}
-                      >
-                        {initials(selectedAgent.name)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                          {selectedAgent.name}{selectedAgent.age ? `, ${selectedAgent.age}` : ""}
-                        </div>
-                        <div className="text-[11px] leading-snug" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                          {selectedAgent.description}
-                        </div>
-                      </div>
-                      <button onClick={() => setSelectedAgentId(null)} className="text-[10px] px-2 py-1 rounded cursor-pointer" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", backgroundColor: "var(--bg-elevated)" }}>
-                        close
-                      </button>
+                {sortedAgents.length > 0 && (
+                  <div className="lg:sticky lg:top-[88px]">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[10px] uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                        Swarm
+                      </span>
+                      <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                        {runningAgents.length} active / {completedAgents.length} done
+                      </span>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-0">
-                      <div className="p-3 max-h-[240px] overflow-y-auto" style={{ borderRight: "1px solid var(--border-default)" }}>
-                        <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Trace</div>
-                        <div className="space-y-0.5">
-                          {selectedAgent.steps.map((step) => (
-                            <motion.div
-                              key={step.step}
-                              initial={{ opacity: 0, x: -4 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              className="flex gap-2 text-[10px] py-0.5"
-                            >
-                              <span className="w-4 text-right shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{step.step}</span>
-                              <span className="shrink-0 font-semibold" style={{
-                                fontFamily: "var(--font-mono)",
-                                color: step.result === "success" ? "var(--status-pass)" : "var(--status-fail)",
-                              }}>
-                                {step.action}
-                              </span>
-                              <span className="truncate" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{step.target}</span>
-                            </motion.div>
-                          ))}
-                          {selectedAgent.status === "running" && (
-                            <div className="flex gap-1 mt-2 ml-6">
-                              {[0, 1, 2].map((i) => (
-                                <div key={i} className="w-1 h-1 rounded-full animate-pulse" style={{ backgroundColor: "var(--status-pass)", animationDelay: `${i * 200}ms` }} />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                    <div
+                      className="rounded-xl p-2"
+                      style={{ backgroundColor: "rgba(12,13,18,0.78)", border: "1px solid rgba(232,164,74,0.1)" }}
+                    >
+                      <div className="max-h-[68vh] overflow-y-auto space-y-2 pr-1">
+                        <AnimatePresence mode="popLayout">
+                          {sortedAgents.map((agent, idx) => {
+                            const hasCriticalFinding = agent.findings.some((f) => f.type === "critical" || f.category === "security");
+                            const liveStep = liveScreenshots.get(agent.id)?.step || 0;
+                            const isFocused = focusedAgentId === agent.id;
 
-                      <div className="p-3 max-h-[240px] overflow-y-auto">
-                        {selectedAgent.findings.length > 0 ? (
-                          <>
-                            <div className="text-[9px] uppercase tracking-[0.12em] mb-2" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
-                              {selectedAgent.findings.length} finding{selectedAgent.findings.length !== 1 ? "s" : ""}
-                            </div>
-                            <div className="space-y-2">
-                              {selectedAgent.findings.map((f, i) => (
-                                <div key={i} className="flex gap-2">
-                                  <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: f.type === "critical" ? "var(--status-fail)" : "var(--status-warn)" }} />
-                                  <div>
-                                    <div className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{f.title}</div>
-                                    <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{f.detail}</div>
+                            return (
+                              <motion.button
+                                key={agent.id}
+                                type="button"
+                                layout
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{
+                                  opacity: 1,
+                                  y: 0,
+                                  boxShadow: hasCriticalFinding && agent.status === "complete"
+                                    ? ["0 0 0 rgba(239,68,68,0)", "0 0 16px rgba(239,68,68,0.3)", "0 0 0 rgba(239,68,68,0)"]
+                                    : "none",
+                                }}
+                                exit={{ opacity: 0 }}
+                                transition={{
+                                  delay: idx * 0.02,
+                                  duration: 0.3,
+                                  boxShadow: hasCriticalFinding ? { repeat: 2, duration: 1.5 } : undefined,
+                                }}
+                                onClick={() => setSelectedAgentId(agent.id)}
+                                className="group relative w-full overflow-hidden rounded-lg px-3 py-3 text-left transition-all duration-200"
+                                style={{
+                                  backgroundColor: isFocused ? "rgba(232,164,74,0.06)" : "var(--bg-surface)",
+                                  border: `1px solid ${agent.status === "blocked" ? "rgba(248,113,113,0.25)" :
+                                      isFocused ? "rgba(232,164,74,0.2)" :
+                                        "var(--border-default)"
+                                    }`,
+                                }}
+                              >
+                                <div className="flex items-start gap-2.5">
+                                  <div
+                                    className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                                    style={{
+                                      backgroundColor: `${catColor(agent.category)}12`,
+                                      color: catColor(agent.category),
+                                      fontFamily: "var(--font-display)",
+                                      border: `1px solid ${catColor(agent.category)}25`,
+                                    }}
+                                  >
+                                    {initials(agent.name)}
+                                  </div>
+
+                                  <div className="min-w-0 flex-1">
+                                    <div className="mb-1 flex items-center gap-2">
+                                      <div className="truncate text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                                        {agent.name}
+                                      </div>
+                                      <div className="relative shrink-0">
+                                        {agent.status === "complete" && agent.outcome === "completed" ? (
+                                          <Check size={11} style={{ color: "var(--status-pass)" }} />
+                                        ) : agent.status === "blocked" ? (
+                                          <X size={11} style={{ color: "var(--status-fail)" }} />
+                                        ) : (
+                                          <>
+                                            <div className="h-1.5 w-1.5 rounded-full" style={{
+                                              backgroundColor:
+                                                agent.status === "running" ? "var(--status-pass)" :
+                                                  agent.status === "complete" ? "var(--cat-accessibility)" :
+                                                    agent.status === "stuck" ? "var(--status-warn)" : "var(--border-default)",
+                                            }} />
+                                            {agent.status === "running" && (
+                                              <div className="absolute inset-0 h-1.5 w-1.5 rounded-full animate-ping" style={{ backgroundColor: "var(--status-pass)", opacity: 0.4 }} />
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="mb-1.5 flex items-center gap-2 text-[9px] uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: catColor(agent.category) }}>
+                                      <span>{agent.category}</span>
+                                      {agent.age ? <span>{agent.age}</span> : null}
+                                    </div>
+
+                                    <div className="line-clamp-2 text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                                      {agent.description}
+                                    </div>
+
+                                    <div className="mt-2 text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                                      {agent.status === "running" ? (
+                                        liveStep > 0 ? `step ${liveStep} · live` : "launching..."
+                                      ) : agent.status === "complete" ? (
+                                        <span style={{ color: agent.outcome === "blocked" ? "var(--status-fail)" : agent.outcome === "struggled" ? "var(--status-warn)" : "var(--cat-accessibility)" }}>
+                                          {((agent.timeMs || 0) / 1000).toFixed(1)}s · {agent.issuesFound || 0} issues
+                                        </span>
+                                      ) : agent.status === "blocked" ? (
+                                        <span style={{ color: "var(--status-fail)" }}>blocked</span>
+                                      ) : (
+                                        "queued"
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                              ))}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="flex items-center justify-center h-full py-8">
-                            <span className="text-[11px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                              {selectedAgent.status === "running" ? "Testing in progress..." : "No issues found"}
-                            </span>
-                          </div>
-                        )}
+
+                                <div className="absolute bottom-0 left-0 right-0 h-px" style={{
+                                  backgroundColor: agent.status === "running" ? "var(--status-pass)" :
+                                    agent.status === "complete" ? "var(--cat-accessibility)" :
+                                      agent.status === "blocked" ? "var(--status-fail)" : "transparent",
+                                  opacity: 0.4,
+                                }} />
+                              </motion.button>
+                            );
+                          })}
+                        </AnimatePresence>
                       </div>
                     </div>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                )}
+              </div>
+            )}
 
             {/* Event log */}
             <div ref={logRef} className="p-3 max-h-32 overflow-y-auto rounded-lg mb-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
@@ -1165,6 +1226,80 @@ export default function TestPage() {
                 </a>
               </div>
             </div>
+
+            {/* Revenue Impact Estimate */}
+            {(() => {
+              const score = report.score?.overall ?? 0;
+              const blocked = report.stats?.blocked ?? 0;
+              const total = report.stats?.total ?? 1;
+              const blockRate = blocked / total;
+              const conversionLoss = Math.max(0, (90 - score) * 0.03);
+              const blockedLoss = blockRate * 0.15;
+              const totalLossRate = Math.min(0.45, conversionLoss + blockedLoss);
+              const isEbayUrl = testUrl.includes("ebay");
+              const baseRevenue = isEbayUrl ? 10_300_000_000 : 1_000_000;
+              const annualLoss = Math.round(baseRevenue * totalLossRate);
+              const monthlyLoss = Math.round(annualLoss / 12);
+              const fmtMoney = (n: number) => {
+                if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+                if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+                if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+                return `$${n.toLocaleString()}`;
+              };
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 16 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.5, delay: 0.2 }}
+                  className="mb-12 p-5 rounded-xl"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(251,191,36,0.04) 100%)",
+                    border: "1px solid rgba(239,68,68,0.15)",
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <DollarSign size={14} style={{ color: "var(--status-fail)" }} />
+                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>
+                      Estimated Revenue Impact
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div>
+                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>
+                        {fmtMoney(monthlyLoss)}
+                      </div>
+                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>lost / month</div>
+                    </div>
+                    <div>
+                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--status-warn)" }}>
+                        {fmtMoney(annualLoss)}
+                      </div>
+                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>lost / year</div>
+                    </div>
+                    <div>
+                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
+                        {Math.round(totalLossRate * 100)}%
+                      </div>
+                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>conversion loss</div>
+                    </div>
+                    <div>
+                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--cat-accessibility)" }}>
+                        {blocked}/{total}
+                      </div>
+                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>users blocked</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-3 text-[11px] leading-relaxed" style={{ borderTop: "1px solid rgba(239,68,68,0.1)", fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                    {blocked > 0
+                      ? `${blocked} of ${total} test personas were completely blocked from completing their task. Each blocked user represents lost revenue from abandoned sessions, failed sign-ups, and broken checkout flows.`
+                      : `Based on ${total} persona tests, UX friction points are estimated to cause a ${Math.round(conversionLoss * 100)}% drop in conversion rates.`
+                    }
+                    {" "}These issues compound daily — fixing the top 3 critical items could recover {fmtMoney(Math.round(annualLoss * 0.6))} annually.
+                  </div>
+                </motion.div>
+              );
+            })()}
 
             {/* Category Scores - animated bars */}
             {report.category_scores && (

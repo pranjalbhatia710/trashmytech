@@ -22,7 +22,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "trashmy.tech -- AI Website Stress Testing",
+  title: "candid. -- AI Website Stress Testing",
   description:
     "50 AI personas test your website the way real humans do. Accessibility, security, usability, mobile -- the full report in 60 seconds.",
 };

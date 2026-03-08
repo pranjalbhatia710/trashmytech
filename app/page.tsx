@@ -105,11 +105,9 @@ export default function Home() {
   const [trashActive, setTrashActive] = useState(false);
   const [trashUrl, setTrashUrl] = useState("");
   const [bgReady, setBgReady] = useState(false);
-  const [formWord, setFormWord] = useState("");
   const [recentSites, setRecentSites] = useState<RecentSite[]>([]);
   const [stats, setStats] = useState<SiteStats>({ total_sites: 0, total_analyses: 0, total_issues: 0, avg_score: null });
   const [statsLoaded, setStatsLoaded] = useState(false);
-  const keywordAbort = useRef<AbortController | null>(null);
   const [preview, setPreview] = useState<{
     site_name?: string;
     description?: string;
@@ -165,47 +163,6 @@ export default function Home() {
     fetchRecent();
     fetchStats();
   }, []);
-
-  // Keyword extraction for background text formation
-  useEffect(() => {
-    const trimmed = url.trim();
-    if (!trimmed || trimmed.length < 5) {
-      setFormWord("");
-      return;
-    }
-
-    let testUrl = trimmed;
-    if (!testUrl.startsWith("http://") && !testUrl.startsWith("https://")) {
-      testUrl = "https://" + testUrl;
-    }
-    try { new URL(testUrl); } catch { return; }
-    if (!testUrl.includes(".", testUrl.indexOf("//") + 2)) return;
-
-    const timer = setTimeout(async () => {
-      keywordAbort.current?.abort();
-      const controller = new AbortController();
-      keywordAbort.current = controller;
-
-      try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/v1/keyword?url=${encodeURIComponent(testUrl)}`,
-          { signal: controller.signal }
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!controller.signal.aborted && data.keyword) {
-          setFormWord(data.keyword);
-        }
-      } catch {
-        // ignore aborts and network errors
-      }
-    }, 600);
-
-    return () => {
-      clearTimeout(timer);
-      keywordAbort.current?.abort();
-    };
-  }, [url]);
 
   // Debounced preview fetch
   useEffect(() => {
@@ -269,11 +226,9 @@ export default function Home() {
     try { new URL(testUrl); } catch { setError("Enter a valid URL"); return; }
 
     setIsLoading(true);
-    setFormWord("");
     setPreview(null);
     setPreviewLoading(false);
     previewAbort.current?.abort();
-    keywordAbort.current?.abort();
     try {
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/v1/tests`,
@@ -288,7 +243,7 @@ export default function Home() {
       const data = await res.json();
       setTrashUrl(testUrl);
       setTrashActive(true);
-      setTimeout(() => router.push(`/test/${data.test_id}?url=${encodeURIComponent(testUrl)}`), 1800);
+      router.push(`/test/${data.test_id}?url=${encodeURIComponent(testUrl)}`);
     } catch {
       setError("Can't reach the server. Is the backend running?");
       setIsLoading(false);
@@ -327,7 +282,7 @@ export default function Home() {
         animate={{ opacity: bgReady ? 1 : 0 }}
         transition={{ duration: 1.8, ease: "easeOut" }}
       >
-        <NeuralBackground color="#e8a44a" trailOpacity={0.015} particleCount={300} speed={0.6} intensity={0.35} formWord={formWord} />
+        <NeuralBackground color="#e8a44a" trailOpacity={0.015} particleCount={300} speed={0.6} />
       </motion.div>
 
       <div
@@ -354,11 +309,11 @@ export default function Home() {
               className="text-[14px] font-semibold tracking-tight"
               style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
             >
-              trashmy.tech
+              candid.
             </span>
           </div>
           <a
-            href="/test/demo"
+            href="/test/ebay"
             className="text-[10px] uppercase tracking-[0.12em] font-medium px-3 py-1.5 rounded-md no-underline transition-all duration-200"
             style={{
               fontFamily: "var(--font-display)",
@@ -413,7 +368,7 @@ export default function Home() {
               className="text-[14px] mb-3 leading-relaxed"
               style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}
             >
-              30 AI personas. 15 external audits. One brutal report.
+              We launch your product. Not co-founders. We take 5% of the value we create.
             </motion.p>
 
             {/* Typewriter */}
@@ -487,7 +442,7 @@ export default function Home() {
                     {isLoading ? (
                       <><Loader2 size={14} className="animate-spin" /><span>Testing</span></>
                     ) : (
-                      <><span>Trash it</span><ArrowRight size={14} /></>
+                      <><span>Audit it</span><ArrowRight size={14} /></>
                     )}
                   </button>
                 </div>
@@ -696,7 +651,7 @@ export default function Home() {
               Built at HackIllinois 2026
             </span>
             <a
-              href="/test/demo"
+              href="/test/ebay"
               className="text-[11px] no-underline transition-colors"
               style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}
               onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}

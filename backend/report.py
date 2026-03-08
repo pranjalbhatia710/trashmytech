@@ -1,4 +1,4 @@
-"""trashmy.tech — Report generator using OpenAI with structured JSON.
+"""trashmy.tech — Report generator using Gemini with structured JSON.
 
 Enhanced with composite scoring system, quick wins analysis, and full
 external-API data injection so the generated report cites concrete numbers.
@@ -10,17 +10,17 @@ import os
 import asyncio
 import traceback
 
-from openai import OpenAI
+from llm_client import get_client, MODEL_PRO, MODEL_FAST
 
 from annotator import annotate_overview_screenshot
 
 log = logging.getLogger("trashmy.report")
 
 # ---------------------------------------------------------------------------
-# Model strategy — OpenAI GPT-5.2 for everything
+# Model strategy — Gemini for everything
 # ---------------------------------------------------------------------------
-REPORT_MODEL = "gpt-5.2"
-ANNOTATION_MODEL = "gpt-5.2"
+REPORT_MODEL = MODEL_PRO
+ANNOTATION_MODEL = MODEL_FAST
 
 # ---------------------------------------------------------------------------
 # System prompt — concise, clinical, calibrated
@@ -613,12 +613,12 @@ async def generate_report(
     }
 
     try:
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            report["error"] = "OPENAI_API_KEY not set"
+            report["error"] = "GEMINI_API_KEY not set"
             return report
 
-        client = OpenAI(api_key=api_key)
+        client = get_client()
 
         prompt = (
             f"REPORT SCHEMA:\n{REPORT_SCHEMA}\n\n"
@@ -788,9 +788,9 @@ def _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations):
 
 async def generate_fix_prompt(report: dict, url: str) -> str:
     """Generate a copy-paste prompt for ChatGPT/Claude to fix the issues found."""
-    from openai import OpenAI
+    from llm_client import get_client
 
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    client = get_client()
 
     score = report.get("score", {}).get("overall", "?")
     narrative = report.get("narrative", {})

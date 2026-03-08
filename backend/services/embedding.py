@@ -1,8 +1,8 @@
-"""OpenAI embedding generation for sites and issues.
+"""Gemini embedding generation for sites and issues.
 
 Embedding generation is non-blocking -- if it fails the error is logged but
 the calling code continues normally.  Uses batch embedding for efficiency.
-Uses OpenAI text-embedding-3-small (1536 dimensions).
+Uses Gemini text-embedding-004 (768 dimensions) via OpenAI-compatible endpoint.
 """
 
 from __future__ import annotations
@@ -18,26 +18,25 @@ _client = None
 
 
 def _get_client():
-    """Lazily initialise the OpenAI client."""
+    """Lazily initialise the Gemini client via OpenAI-compatible endpoint."""
     global _client
     if _client is not None:
         return _client
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        log.warning("OPENAI_API_KEY not set -- embedding generation disabled")
-        return None
-
     try:
-        from openai import OpenAI
-        _client = OpenAI(api_key=api_key)
-        log.info("OpenAI client initialised for embeddings")
+        from llm_client import get_client
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            log.warning("GEMINI_API_KEY not set -- embedding generation disabled")
+            return None
+        _client = get_client()
+        log.info("Gemini client initialised for embeddings")
         return _client
     except ImportError:
         log.warning("openai package not installed -- embedding generation disabled")
         return None
     except Exception:
-        log.exception("Failed to initialise OpenAI client")
+        log.exception("Failed to initialise Gemini client")
         return None
 
 
@@ -45,9 +44,9 @@ def _get_client():
 # Core embedding function
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
-MAX_BATCH_SIZE = 2048  # OpenAI batch limit
+EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_DIM = 768
+MAX_BATCH_SIZE = 2048
 
 
 def is_available() -> bool:

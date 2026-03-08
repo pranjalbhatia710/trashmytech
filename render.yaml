@@ -6,8 +6,6 @@ services:
     dockerContext: backend
     plan: starter
     envVars:
-      - key: OPENAI_API_KEY
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: DATABASE_URL

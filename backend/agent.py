@@ -543,7 +543,7 @@ async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.chat.completions.create,
-                model="gpt-5.2",
+                model="gemini-2.5-flash",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -1293,7 +1293,7 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
 
 
 async def _generate_persona_analysis(client, persona: dict, result: dict, url: str) -> dict:
-    """Use GPT-5.2 to generate a rich, opinionated analysis from this persona's perspective."""
+    """Use Gemini to generate a rich, opinionated analysis from this persona's perspective."""
 
     name = persona.get("name", "Unknown")
     age = persona.get("age")
@@ -1360,7 +1360,7 @@ Return ONLY valid JSON:
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.chat.completions.create,
-                model="gpt-5.2",
+                model="gemini-2.5-flash",
                 messages=[
                     {"role": "user", "content": prompt},
                 ],
@@ -1452,11 +1452,11 @@ def _make_result(persona, steps, errors, dead_ends, findings, form_test_results,
 
 async def run_agent_local(url: str, persona: dict, site_context: dict,
                           on_step_screenshot=None, shared_browser=None) -> dict:
-    from openai import OpenAI
-    api_key = os.environ.get("OPENAI_API_KEY")
+    from llm_client import get_client
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return _make_result(persona, [], ["OPENAI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
-    client = OpenAI(api_key=api_key)
+        return _make_result(persona, [], ["GEMINI_API_KEY not set"], [], [], [], [], False, time.time(), url, 0)
+    client = get_client()
     return await _agent_loop(url, persona, site_context, client,
                              on_step_screenshot=on_step_screenshot,
                              shared_browser=shared_browser)

@@ -130,14 +130,12 @@ async def run_swarm(
 
     sender_task = asyncio.create_task(screenshot_sender())
 
-    # Launch browsers
+    # Launch all browsers in parallel
     pw = await pw_start().start()
-    browsers = []
-    for _ in range(num_browsers):
-        browsers.append(await pw.chromium.launch(
-            headless=not headed,
-            slow_mo=80 if headed else 0,
-        ))
+    browsers = await asyncio.gather(*(
+        pw.chromium.launch(headless=not headed, slow_mo=80 if headed else 0)
+        for _ in range(num_browsers)
+    ))
 
     # Distribute personas round-robin across browsers
     assignments: list[list[tuple[int, dict]]] = [[] for _ in range(num_browsers)]
@@ -147,8 +145,9 @@ async def run_swarm(
     final_results: list[dict | None] = [None] * len(personas)
     results_lock = asyncio.Lock()
 
-    async def _run_agent(idx: int, persona: dict, browser):
-        await asyncio.sleep((idx % num_browsers) * 0.2)
+    async def _run_agent(idx: int, persona: dict, browser, slot: int):
+        # Small stagger within each browser group to avoid thundering herd
+        await asyncio.sleep(slot * 0.15)
         try:
             result = await run_agent_local(
                 url, persona, site_context,
@@ -166,10 +165,12 @@ async def run_swarm(
     async def _run_browser_group(bi: int):
         browser = browsers[bi]
         await asyncio.gather(
-            *(_run_agent(idx, p, browser) for idx, p in assignments[bi]),
+            *(_run_agent(idx, p, browser, slot)
+              for slot, (idx, p) in enumerate(assignments[bi])),
             return_exceptions=True,
         )
 
+    # All browser groups run fully in parallel
     await asyncio.gather(*(_run_browser_group(bi) for bi in range(num_browsers)),
                          return_exceptions=True)
 

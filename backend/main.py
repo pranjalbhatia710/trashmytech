@@ -20,7 +20,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from openai import OpenAI
+from llm_client import get_client, MODEL_FAST
 
 from db.connection import (init_pool, close_pool, run_migrations,
                            is_available as db_available, health_check as db_health_check)
@@ -163,15 +163,15 @@ async def extract_keyword(url: str):
     except Exception:
         fallback = "SITE"
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return {"keyword": fallback}
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = get_client()
         resp = await asyncio.to_thread(
             client.chat.completions.create,
-            model="gpt-4o-mini",
+            model=MODEL_FAST,
             messages=[{"role": "user",
                        "content": f"What is the brand name from this URL? Return ONLY the single brand/company name word, max 10 chars. URL: {url}"}],
             max_completion_tokens=20,
@@ -422,10 +422,10 @@ async def preview_url(request: Request):
             resp = await http.get(url, headers={"User-Agent": "TrashmyTech/2.0"})
             page_html = resp.text[:8000]
 
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        client = get_client()
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model="gpt-4o-mini",
+            model=MODEL_FAST,
             messages=[
                 {"role": "system", "content": (
                     "You analyze websites. Return a JSON object with exactly these fields:\n"

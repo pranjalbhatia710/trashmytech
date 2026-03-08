@@ -1,7 +1,7 @@
 """
-annotator.py — Annotate screenshots with GPT-5.2 bounding boxes
+annotator.py — Annotate screenshots with Gemini vision bounding boxes
 
-Uses OpenAI GPT-5.2 vision to mark:
+Uses Gemini vision to mark:
 - RED boxes: Elements with problems (too small, missing labels, broken)
 - GREEN boxes: Elements that work well (good contrast, proper size, accessible)
 - YELLOW boxes: Warnings
@@ -17,9 +17,9 @@ import base64
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
-from openai import OpenAI
+from llm_client import get_client, MODEL_FAST
 
-ANNOTATION_MODEL = "gpt-5.2"
+ANNOTATION_MODEL = MODEL_FAST
 
 ANNOTATION_PROMPT = """You are a UX auditor annotating a screenshot of a website.
 
@@ -78,7 +78,7 @@ _annotation_semaphore = asyncio.Semaphore(1)
 
 
 def _get_client():
-    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return get_client()
 
 
 def _load_font(size: int):

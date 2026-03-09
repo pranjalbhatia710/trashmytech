@@ -7,14 +7,14 @@
 
 Every test run collects structured data. That data feeds Gemini as a reasoning model to produce calibrated, evidence-based ratings. The report is not a summary -- it's an integrated document where every claim links to a screenshot, every rating links to measured data, and every persona's story connects to specific elements on the page.
 
-```
+```1
 URL IN
   |
   v
 CRAWL (Playwright) --> raw site data (DOM, forms, links, accessibility violations, screenshot)
   |
   v
-ASSIGN TASKS (Gemini 2.5 Flash, thinking enabled) --> each persona gets a specific goal
+ASSIGN TASKS (Gemini 2.5 Flash, thinking en2abled) --> each persona gets a specific goal
   |
   v
 15 PARALLEL AGENTS (Modal) --> each collects structured session data:

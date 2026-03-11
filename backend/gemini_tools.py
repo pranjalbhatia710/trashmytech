@@ -102,8 +102,8 @@ class GeminiTools:
 
     # Available model aliases — pass "pro" or "flash" to __init__
     MODELS = {
-        "pro": "gemini-2.5-pro",          # more capable, slower
-        "flash": "gemini-2.5-flash",      # faster, lighter
+        "pro": "gemini-2.0-flash",          # all tasks use flash 3.0
+        "flash": "gemini-2.0-flash",      # faster, lighter
     }
 
     def __init__(self, api_key: Optional[str] = None, model: str = "pro"):

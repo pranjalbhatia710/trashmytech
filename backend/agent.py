@@ -543,7 +543,7 @@ async def _ask_llm(client, system_prompt: str, user_prompt: str) -> dict:
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.chat.completions.create,
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -1360,7 +1360,7 @@ Return ONLY valid JSON:
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.chat.completions.create,
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 messages=[
                     {"role": "user", "content": prompt},
                 ],

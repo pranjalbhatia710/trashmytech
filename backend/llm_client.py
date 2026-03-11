@@ -7,8 +7,8 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Models
-MODEL_FAST = "gemini-2.5-flash"   # agents, annotations, small tasks
-MODEL_PRO = "gemini-2.5-pro"      # reports, complex analysis
+MODEL_FAST = "gemini-2.0-flash"   # agents, annotations, small tasks
+MODEL_PRO = "gemini-2.0-flash"    # reports, complex analysis
 
 
 def get_client() -> OpenAI:

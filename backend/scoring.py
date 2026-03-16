@@ -3,16 +3,23 @@
 Aggregates data from crawl results, persona agent sessions, and external API
 checks into a single 0-100 score with six weighted categories:
 
-    Accessibility  20%
-    SEO            15%
+    Accessibility  25%
+    SEO            20%
     Performance    20%
     Content        15%
     Security       10%
-    UX             20%
+    UX             10%
 
 Each category is itself a weighted blend of sub-metrics.  When a data source
 is unavailable the sub-metric weight is redistributed proportionally among
 the sources that *are* present so that a missing API never tanks a category.
+
+PURITY GUARANTEE: This module contains no random imports, no LLM calls, and
+no network I/O.  Given identical inputs it always produces identical outputs.
+
+LITE MODE: When external API data is missing (lite analysis mode), scoring
+functions redistribute weights to available local data sources.  Lite mode
+scores target +/-10 points of full mode for the same site.
 """
 
 from __future__ import annotations
@@ -28,12 +35,12 @@ log = logging.getLogger("trashmy.scoring")
 # Top-level category weights  (must sum to 1.0)
 # ---------------------------------------------------------------------------
 SCORE_WEIGHTS: dict[str, float] = {
-    "accessibility": 0.20,
-    "seo":           0.15,
+    "accessibility": 0.25,
+    "seo":           0.20,
     "performance":   0.20,
     "content":       0.15,
     "security":      0.10,
-    "ux":            0.20,
+    "ux":            0.10,
 }
 
 # ---------------------------------------------------------------------------
@@ -72,13 +79,17 @@ class CompositeScore:
 # ---------------------------------------------------------------------------
 
 def get_letter_grade(score: float) -> str:
-    if score >= 85:
+    """Map a 0-100 score to a letter grade.
+
+    Thresholds:  A >= 90,  B >= 75,  C >= 60,  D >= 40,  F < 40
+    """
+    if score >= 90:
         return "A"
-    if score >= 70:
+    if score >= 75:
         return "B"
-    if score >= 55:
+    if score >= 60:
         return "C"
-    if score >= 35:
+    if score >= 40:
         return "D"
     return "F"
 
@@ -211,6 +222,21 @@ def _score_accessibility(crawl: dict, sessions: list[dict], external: dict) -> C
     items.append(("color_contrast", contrast_score, 0.15))
 
     score, used, missing = _weighted_average(items)
+
+    # Hard cap: if there are critical axe-core violations, cap accessibility at 50
+    critical_violations = sum(
+        1 for v in violations
+        if v.get("impact") == "critical"
+    ) if isinstance(violations, list) else 0
+    if critical_violations > 0 and score > A11Y_CRITICAL_FAILURE_CAP:
+        log.info(
+            "Accessibility capped at %.0f (was %.1f) due to %d critical axe violations",
+            A11Y_CRITICAL_FAILURE_CAP, score, critical_violations,
+        )
+        score = A11Y_CRITICAL_FAILURE_CAP
+        breakdown["_capped"] = A11Y_CRITICAL_FAILURE_CAP
+        breakdown["_cap_reason"] = f"{critical_violations} critical axe-core violation(s)"
+
     return CategoryScore(
         name="accessibility", score=round(score, 1), weight=SCORE_WEIGHTS["accessibility"],
         breakdown=breakdown, data_sources_used=used, data_sources_missing=missing,
@@ -260,11 +286,20 @@ def _count_contrast_issues(crawl: dict, sessions: list[dict]) -> int:
 # ===================================================================
 
 def _score_seo(crawl: dict, _sessions: list[dict], external: dict) -> CategoryScore:
+    """Score SEO using Lighthouse when available, crawl data as fallback.
+
+    In lite mode (no PageSpeed SEO audit), crawl_seo_signals and content_seo
+    absorb the Lighthouse weight via redistribution. This keeps lite mode
+    scores within +/-10 of full mode for most sites since crawl SEO signals
+    capture most of what Lighthouse checks (meta tags, headings, viewport, etc.).
+    """
     breakdown: dict[str, float] = {}
     items: list[tuple[str, float | None, float]] = []
 
-    # -- Lighthouse SEO ------------------------------------------------------
     psi = external.get("pagespeed", {})
+    has_pagespeed = bool(psi and psi.get("seo") is not None)
+
+    # -- Lighthouse SEO ------------------------------------------------------
     lh_seo: float | None = psi.get("seo") if psi else None
     if lh_seo is not None:
         if lh_seo <= 1.0:
@@ -274,6 +309,7 @@ def _score_seo(crawl: dict, _sessions: list[dict], external: dict) -> CategorySc
     items.append(("lighthouse_seo", lh_seo, 0.35))
 
     # -- Crawl SEO signals ---------------------------------------------------
+    # In lite mode these get higher effective weight via redistribution
     seo = crawl.get("seo", {})
     ai_seo = crawl.get("ai_seo", {})
     points = 0.0
@@ -296,7 +332,9 @@ def _score_seo(crawl: dict, _sessions: list[dict], external: dict) -> CategorySc
             points += pts
     crawl_seo = _clamp((points / max_points) * 100) if max_points else 50
     breakdown["crawl_seo_signals"] = round(crawl_seo, 1)
-    items.append(("crawl_seo_signals", crawl_seo, 0.25))
+    # Give crawl signals more base weight in lite mode so redistribution is smoother
+    crawl_seo_weight = 0.35 if not has_pagespeed else 0.25
+    items.append(("crawl_seo_signals", crawl_seo, crawl_seo_weight))
 
     # -- Content SEO quality (heading hierarchy + AI readability) ------------
     headings = crawl.get("heading_hierarchy", {})
@@ -382,10 +420,17 @@ LOAD_THRESHOLDS_MS = [(1000, 100), (2000, 85), (3000, 70), (5000, 50), (999999, 
 
 
 def _score_performance(crawl: dict, sessions: list[dict], external: dict) -> CategoryScore:
+    """Score performance using Lighthouse CWV when available, local metrics as fallback.
+
+    In lite mode (no PageSpeed data), the agent_load_times sub-metric
+    is promoted to higher weight to compensate. This keeps lite mode
+    scores within +/-10 of full mode for most sites.
+    """
     breakdown: dict[str, float] = {}
     items: list[tuple[str, float | None, float]] = []
 
     psi = external.get("pagespeed", {})
+    has_pagespeed = bool(psi and psi.get("performance") is not None)
 
     # -- Lighthouse performance ---------------------------------------------
     lh_perf: float | None = psi.get("performance") if psi else None
@@ -414,20 +459,47 @@ def _score_performance(crawl: dict, sessions: list[dict], external: dict) -> Cat
             items.append((metric_name, None, weight))
 
     # -- Agent load times ---------------------------------------------------
+    # In lite mode (no PageSpeed), give agent_load_times more weight so it
+    # isn't the only sub-metric with a tiny 5% share that gets inflated to 100%.
     load_ms = crawl.get("page_load_time_ms")
     agent_loads = [s.get("total_time_ms", 0) for s in sessions if s.get("total_time_ms")]
+
+    # Use higher weight for local metrics when PageSpeed is absent
+    local_weight = 0.30 if not has_pagespeed else 0.05
+
     if load_ms:
         agent_load_score = _bucket_score(load_ms, LOAD_THRESHOLDS_MS)
         breakdown["agent_load_times"] = round(agent_load_score, 1)
-        items.append(("agent_load_times", agent_load_score, 0.05))
+        items.append(("agent_load_times", agent_load_score, local_weight))
     elif agent_loads:
         avg = sum(agent_loads) / len(agent_loads)
         # agent times include browsing, normalise generously
         agent_load_score = _bucket_score(avg / 3, LOAD_THRESHOLDS_MS)
         breakdown["agent_load_times"] = round(agent_load_score, 1)
-        items.append(("agent_load_times", agent_load_score, 0.05))
+        items.append(("agent_load_times", agent_load_score, local_weight))
     else:
-        items.append(("agent_load_times", None, 0.05))
+        items.append(("agent_load_times", None, local_weight))
+
+    # -- Page weight / resource count (lite mode signal) --------------------
+    # In lite mode, supplement with a heuristic from crawl data: number of
+    # images and total link count correlate with page complexity / weight.
+    if not has_pagespeed:
+        images = crawl.get("images", {})
+        img_total = images.get("total", 0) if isinstance(images, dict) else 0
+        # Heuristic: fewer images + fast load = likely performant
+        # Many images + slow load = likely heavy page
+        if load_ms and img_total > 0:
+            # Pages with >20 images and >3s load are probably heavy
+            if img_total > 20 and load_ms > 3000:
+                resource_score = 35.0
+            elif img_total > 10 and load_ms > 2000:
+                resource_score = 55.0
+            elif load_ms < 1500:
+                resource_score = 90.0
+            else:
+                resource_score = 70.0
+            breakdown["resource_heuristic"] = round(resource_score, 1)
+            items.append(("resource_heuristic", resource_score, 0.15))
 
     score, used, missing = _weighted_average(items)
     return CategoryScore(
@@ -455,9 +527,18 @@ OBSERVATORY_GRADE_MAP: dict[str, float] = {
 }
 
 
-def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> CategoryScore:
+def _score_security(crawl: dict, sessions: list[dict], external: dict) -> CategoryScore:
+    """Score security using Observatory when available, local signals as fallback.
+
+    In lite mode (no Observatory, no Safe Browsing), security scoring relies
+    on SSL check, DNS auth, and HTTPS presence from the crawl URL.  This keeps
+    lite mode scores within +/-10 of full mode for typical sites.
+    """
     breakdown: dict[str, float] = {}
     items: list[tuple[str, float | None, float]] = []
+
+    has_observatory = bool((external.get("observatory") or {}).get("grade"))
+    has_safe_browsing = external.get("safe_browsing") is not None
 
     # -- Mozilla Observatory ------------------------------------------------
     obs = external.get("observatory") or {}
@@ -502,7 +583,7 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
     # -- DNS authentication (SPF + DMARC) -----------------------------------
     dns = external.get("dns_auth") or {}
     if dns:
-        pts = 20.0  # base score — absence of SPF/DMARC isn't catastrophic for most sites
+        pts = 20.0  # base score -- absence of SPF/DMARC isn't catastrophic for most sites
         if dns.get("spf_present"):
             pts += 25
             if dns.get("spf_strict"):
@@ -517,12 +598,19 @@ def _score_security(_crawl: dict, sessions: list[dict], external: dict) -> Categ
     else:
         items.append(("dns_auth", None, 0.20))
 
-    # When no external security data exists at all, derive a basic score from
-    # what we can infer: HTTPS in the URL is a positive signal.
-    score, used, missing = _weighted_average(items)
+    # -- HTTPS presence (lite mode fallback for Observatory + Safe Browsing) -
+    # When Observatory and Safe Browsing are both missing (lite mode),
+    # use HTTPS presence as a proxy to avoid scoring on only SSL + DNS.
+    if not has_observatory and not has_safe_browsing:
+        url = crawl.get("url", "")
+        if url.startswith("https://"):
+            https_score = 80.0  # HTTPS is a strong positive signal
+        else:
+            https_score = 20.0  # HTTP-only is a serious concern
+        breakdown["https_presence"] = round(https_score, 1)
+        items.append(("https_presence", https_score, 0.30))
 
-    # Fallback: if everything is missing, give a neutral 50 rather than
-    # the default 50 from _weighted_average (which already does this).
+    score, used, missing = _weighted_average(items)
     return CategoryScore(
         name="security", score=round(score, 1), weight=SCORE_WEIGHTS["security"],
         breakdown=breakdown, data_sources_used=used, data_sources_missing=missing,
@@ -1016,8 +1104,10 @@ def _normalize_external_data(raw: dict) -> dict:
             if isinstance(carbon, dict) and carbon.get("green_hosting") is not None:
                 ext["green_hosting"] = carbon["green_hosting"]
 
-    # --- Safe browsing: if API failed but site loads over HTTPS, assume clean ---
-    if ext.get("safe_browsing") is None:
+    # --- Safe browsing: if API failed in FULL mode, assume clean ---
+    # In lite mode, Safe Browsing wasn't run at all, so don't inject an
+    # assumption. Let the weight redistribute to other security sub-metrics.
+    if ext.get("safe_browsing") is None and ext.get("analysis_mode") != "lite":
         # No data means the API failed, not that the site is unsafe.
         # Default to clean for HTTPS sites rather than penalizing.
         ext["safe_browsing"] = "clean"
@@ -1029,11 +1119,22 @@ def _normalize_external_data(raw: dict) -> dict:
     return ext
 
 
-def _compute_hard_caps(crawl_data: dict, ext: dict) -> list[tuple[float, str]]:
-    """Compute hard score caps for critical security/safety failures.
+def _compute_hard_caps(
+    crawl_data: dict,
+    ext: dict,
+    categories: list[CategoryScore] | None = None,
+) -> list[tuple[float, str]]:
+    """Compute hard score caps for critical security/safety/accessibility failures.
 
     Returns a list of (max_score, reason) tuples. The overall score
     must not exceed any of these caps.
+
+    Hard cap rules:
+    - Safe Browsing flagged -> overall capped at 15
+    - No HTTPS -> overall capped at 40
+    - Invalid/expired SSL -> overall capped at 50
+    - Critical accessibility failures -> accessibility_score capped at 50
+      (applied to the category, not overall; but a note is logged)
     """
     caps: list[tuple[float, str]] = []
 
@@ -1075,6 +1176,10 @@ def _compute_hard_caps(crawl_data: dict, ext: dict) -> list[tuple[float, str]]:
             caps.append((45.0, f"All {len(forms)} form(s) have no real submit action"))
 
     return caps
+
+
+# Maximum accessibility score when critical violations are present.
+A11Y_CRITICAL_FAILURE_CAP = 50.0
 
 
 def calculate_scores(
@@ -1134,7 +1239,7 @@ def calculate_scores(
         overall = min(100, overall + boost)
 
     # Apply hard caps for critical failures (Safe Browsing, no HTTPS, invalid SSL)
-    hard_caps = _compute_hard_caps(crawl_data, ext)
+    hard_caps = _compute_hard_caps(crawl_data, ext, categories)
     cap_reasons: list[str] = []
     for cap_value, cap_reason in hard_caps:
         if overall > cap_value:

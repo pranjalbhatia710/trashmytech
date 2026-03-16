@@ -1,6 +1,9 @@
 """trashmy.tech — 35 AI user personas for website stress-testing."""
 
+import hashlib
 import random
+
+from personas_content_seo import CONTENT_SEO_PERSONAS
 
 PERSONAS = [
     # ── ACCESSIBILITY (5) ──────────────────────────────────────
@@ -433,78 +436,7 @@ PERSONAS = [
         },
     },
 
-    # ── CONTENT / SEO (5) ──────────────────────────────────────
-    {
-        "id": "S1", "name": "Dr. Sarah Mitchell", "age": 42,
-        "category": "content_seo",
-        "description": "Content evaluator who reads ALL visible text, scores readability (Flesch-Kincaid), checks heading hierarchy, validates meta tags, structured data, and image alt text coverage.",
-        "avatar_emoji": "📝", "task_style": "content_evaluator",
-        "viewport": {"width": 1280, "height": 720},
-        "behavioral_modifiers": {
-            "click_delay_ms": 600, "misclick_rate": 0.01,
-            "reads_everything": True, "skips_text": False,
-            "keyboard_only": False, "input_strategy": "normal",
-            "patience_threshold_ms": 60000, "double_clicks": False,
-            "uses_back_button": True, "refreshes_randomly": False,
-        },
-    },
-    {
-        "id": "S2", "name": "Alex Rivera", "age": 29,
-        "category": "content_seo",
-        "description": "Value proposition tester who evaluates above-the-fold content in 5 seconds: headline clarity, CTA specificity, and whether the site communicates what it does instantly.",
-        "avatar_emoji": "🎯", "task_style": "value_prop_tester",
-        "viewport": {"width": 1280, "height": 720},
-        "behavioral_modifiers": {
-            "click_delay_ms": 200, "misclick_rate": 0.02,
-            "reads_everything": False, "skips_text": False,
-            "keyboard_only": False, "input_strategy": "normal",
-            "patience_threshold_ms": 15000, "double_clicks": False,
-            "uses_back_button": False, "refreshes_randomly": False,
-        },
-    },
-    {
-        "id": "S3", "name": "Rachel Torres", "age": 36,
-        "category": "content_seo",
-        "description": "Skeptic reader who hunts for trust signals: privacy policy, terms, contact info, about page, social proof, and credibility indicators. Flags red flags like broken links and missing HTTPS.",
-        "avatar_emoji": "🔐", "task_style": "skeptic_reader",
-        "viewport": {"width": 1280, "height": 720},
-        "behavioral_modifiers": {
-            "click_delay_ms": 500, "misclick_rate": 0.02,
-            "reads_everything": True, "skips_text": False,
-            "keyboard_only": False, "input_strategy": "normal",
-            "patience_threshold_ms": 45000, "double_clicks": False,
-            "uses_back_button": True, "refreshes_randomly": False,
-        },
-    },
-    {
-        "id": "S4", "name": "Googlebot", "age": None,
-        "category": "content_seo",
-        "description": "Search engine crawler that checks robots.txt, sitemap.xml, canonical URLs, JavaScript rendering dependency, mobile-friendliness, Core Web Vitals indicators, and structured data validity.",
-        "avatar_emoji": "🤖", "task_style": "googlebot_simulator",
-        "viewport": {"width": 1280, "height": 720},
-        "behavioral_modifiers": {
-            "click_delay_ms": 100, "misclick_rate": 0.0,
-            "reads_everything": True, "skips_text": False,
-            "keyboard_only": False, "input_strategy": "normal",
-            "patience_threshold_ms": 60000, "double_clicks": False,
-            "uses_back_button": False, "refreshes_randomly": False,
-        },
-    },
-    {
-        "id": "S5", "name": "Social Bot", "age": None,
-        "category": "content_seo",
-        "description": "Social media link preview bot that validates Open Graph tags, Twitter Card tags, share image resolution, and composes a share preview quality rating.",
-        "avatar_emoji": "📣", "task_style": "social_bot_simulator",
-        "viewport": {"width": 1280, "height": 720},
-        "behavioral_modifiers": {
-            "click_delay_ms": 100, "misclick_rate": 0.0,
-            "reads_everything": True, "skips_text": False,
-            "keyboard_only": False, "input_strategy": "normal",
-            "patience_threshold_ms": 30000, "double_clicks": False,
-            "uses_back_button": False, "refreshes_randomly": False,
-        },
-    },
-]
+] + CONTENT_SEO_PERSONAS  # ── CONTENT / SEO (5) — defined in personas_content_seo.py
 
 ADVERSARIAL_INPUTS = [
     "Robert'); DROP TABLE users;--",
@@ -541,8 +473,17 @@ ADVERSARIAL_INPUTS = [
 ]
 
 
-def sample_personas(n: int = 30) -> list[dict]:
-    """Pick n personas ensuring at least 2 per category. Default 30 for thorough testing."""
+def sample_personas(n: int = 12, url: str = "") -> list[dict]:
+    """Pick n personas deterministically for the same URL.
+
+    Uses a hash of the URL to seed persona selection, so the same URL
+    always gets the same set of personas in the same order.
+    Default 12 for a balanced cost-vs-coverage trade-off.
+    """
+    # Deterministic seed from URL so same link → same personas every time
+    seed = int(hashlib.sha256(url.encode()).hexdigest(), 16) % (2**32)
+    rng = random.Random(seed)
+
     categories = ["accessibility", "demographic", "chaos", "behavioral", "portfolio", "content_seo"]
     selected = []
 
@@ -550,12 +491,14 @@ def sample_personas(n: int = 30) -> list[dict]:
         pool = [p for p in PERSONAS if p["category"] == cat]
         if pool:
             count = min(2, len(pool))
-            selected.extend(random.sample(pool, count))
+            selected.extend(rng.sample(pool, count))
 
     remaining = [p for p in PERSONAS if p not in selected]
     extra = min(n - len(selected), len(remaining))
     if extra > 0:
-        selected.extend(random.sample(remaining, extra))
+        selected.extend(rng.sample(remaining, extra))
 
-    random.shuffle(selected)
-    return selected[:n]
+    # Sort deterministically by persona ID (no random shuffle)
+    selected = selected[:n]
+    selected.sort(key=lambda p: p["id"])
+    return selected

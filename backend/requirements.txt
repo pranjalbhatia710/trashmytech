@@ -17,3 +17,7 @@ upstash-redis>=1.0.0
 redis>=5.0.0
 # openai SDK used as Gemini OpenAI-compatible client
 playwright-stealth>=1.0.6
+# Auth & payments
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+stripe>=8.0.0

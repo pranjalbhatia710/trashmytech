@@ -23,6 +23,7 @@ TTL_REPORT = 604_800                # 7 days
 TTL_PAGESPEED = 86_400              # 24 hours
 TTL_OBSERVATORY = 604_800           # 7 days
 TTL_CARBON = 2_592_000              # 30 days
+TTL_FREE_USAGE = 2_592_000          # 30 days
 
 _API_TTLS: dict[str, int] = {
     "pagespeed": TTL_PAGESPEED,
@@ -106,10 +107,21 @@ class CacheManager:
     # -- Analysis cache --
 
     @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        """Normalize a domain for consistent cache key generation."""
+        d = domain.lower().strip()
+        if d.startswith("www."):
+            d = d[4:]
+        # Strip trailing dots / slashes
+        d = d.rstrip("./")
+        return d
+
+    @staticmethod
     async def get_cached_analysis(domain: str) -> Optional[str]:
         """Return the latest analysis UUID for a domain, or None."""
         if not is_available():
             return None
+        domain = CacheManager._normalize_domain(domain)
         key = f"analysis:{domain}:latest"
         try:
             value = await _redis.get(key)
@@ -123,10 +135,23 @@ class CacheManager:
             return None
 
     @staticmethod
+    async def get_cached_analysis_report(domain: str) -> Optional[dict]:
+        """Return the full cached report for a domain (Redis shortcut).
+
+        Looks up the latest analysis UUID, then fetches the report for it.
+        Returns None on miss.
+        """
+        analysis_id = await CacheManager.get_cached_analysis(domain)
+        if not analysis_id:
+            return None
+        return await CacheManager.get_cached_report(analysis_id)
+
+    @staticmethod
     async def cache_analysis(domain: str, analysis_id: str) -> None:
         """Store the latest analysis UUID for a domain."""
         if not is_available():
             return
+        domain = CacheManager._normalize_domain(domain)
         key = f"analysis:{domain}:latest"
         try:
             await _redis.set(key, analysis_id, ex=TTL_ANALYSIS_LATEST)
@@ -199,6 +224,65 @@ class CacheManager:
         except Exception:
             log.exception("Cache error writing %s", key)
 
+    # -- Free-tier usage tracking --
+
+    @staticmethod
+    async def cache_free_usage(ip_address: str) -> None:
+        """Initialise the free-usage counter for an IP (set to 0 if not exists)."""
+        if not is_available():
+            return
+        key = f"free_usage:{ip_address}"
+        try:
+            # Only set if the key does not already exist (NX)
+            existing = await _redis.get(key)
+            if existing is None:
+                await _redis.set(key, "0", ex=TTL_FREE_USAGE)
+                log.info("Initialised free usage counter for %s (TTL=%ds)", ip_address, TTL_FREE_USAGE)
+        except Exception:
+            log.exception("Cache error initialising free usage for %s", ip_address)
+
+    @staticmethod
+    async def check_free_usage(ip_address: str) -> int:
+        """Return the number of analyses this IP has used on the free tier."""
+        if not is_available():
+            return 0
+        key = f"free_usage:{ip_address}"
+        try:
+            value = await _redis.get(key)
+            if value is not None:
+                log.info("Free usage check for %s: %s", ip_address, value)
+                return int(value)
+            log.info("Free usage MISS for %s (no record)", ip_address)
+            return 0
+        except Exception:
+            log.exception("Cache error reading free usage for %s", ip_address)
+            return 0
+
+    @staticmethod
+    async def increment_free_usage(ip_address: str) -> int:
+        """Increment the free-usage counter for an IP.  Returns the new count."""
+        if not is_available():
+            return 0
+        key = f"free_usage:{ip_address}"
+        try:
+            # Use INCR which atomically creates + increments
+            if _backend == "upstash":
+                new_val = await _redis.incr(key)
+            else:
+                new_val = await _redis.incr(key)
+            # Ensure TTL is set (INCR on a new key creates it without TTL)
+            try:
+                ttl = await _redis.ttl(key)
+                if ttl is not None and int(ttl) < 0:
+                    await _redis.expire(key, TTL_FREE_USAGE)
+            except Exception:
+                pass
+            log.info("Incremented free usage for %s -> %s", ip_address, new_val)
+            return int(new_val)
+        except Exception:
+            log.exception("Cache error incrementing free usage for %s", ip_address)
+            return 0
+
     # -- Invalidation --
 
     @staticmethod
@@ -206,6 +290,7 @@ class CacheManager:
         """Clear all caches for a domain."""
         if not is_available():
             return
+        domain = CacheManager._normalize_domain(domain)
         keys_to_delete = [
             f"analysis:{domain}:latest",
             f"pagespeed:{domain}",

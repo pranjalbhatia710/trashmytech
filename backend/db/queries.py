@@ -129,6 +129,8 @@ async def insert_analysis(
     report_json: Optional[dict] = None,
     site_map_json: Optional[dict] = None,
     external_api_data: Optional[dict] = None,
+    analysis_mode: str = "standard",
+    user_id: Optional[UUID] = None,
 ) -> Optional[UUID]:
     """Insert an analysis row.  Returns the analysis UUID."""
     if not is_available():
@@ -142,8 +144,9 @@ async def insert_analysis(
                 site_id, overall_score, accessibility_score, seo_score,
                 performance_score, security_score, content_score, ux_score,
                 total_issues, critical_issues, execution_time_seconds,
-                report_json, site_map_json, external_api_data
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                report_json, site_map_json, external_api_data,
+                analysis_mode, user_id
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             RETURNING id
             """,
             site_id,
@@ -153,9 +156,12 @@ async def insert_analysis(
             json.dumps(report_json, default=str) if report_json else None,
             json.dumps(site_map_json, default=str) if site_map_json else None,
             json.dumps(external_api_data, default=str) if external_api_data else None,
+            analysis_mode,
+            user_id,
         )
         analysis_id = row["id"]
-        log.info("Inserted analysis %s for site %s", analysis_id, site_id)
+        log.info("Inserted analysis %s for site %s (mode=%s, user=%s)",
+                 analysis_id, site_id, analysis_mode, user_id)
         return analysis_id
 
 
@@ -477,3 +483,144 @@ async def get_stats() -> dict:
             "total_sites": 0, "total_analyses": 0,
             "total_issues": 0, "avg_score": None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+async def create_user(
+    email: str,
+    name: Optional[str] = None,
+    google_id: Optional[str] = None,
+    password_hash: Optional[str] = None,
+) -> Optional[dict]:
+    """Create a new user.  Returns the user record dict or None."""
+    if not is_available():
+        return None
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO users (email, name, google_id, password_hash)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, email, name, google_id, created_at,
+                          has_paid, free_analysis_used, stripe_customer_id
+                """,
+                email, name, google_id, password_hash,
+            )
+            user = dict(row)
+            log.info("Created user %s (email=%s)", user["id"], email)
+            return user
+        except Exception:
+            log.exception("Failed to create user (email=%s)", email)
+            return None
+
+
+async def get_user_by_email(email: str) -> Optional[dict]:
+    """Fetch a user by email address."""
+    if not is_available():
+        return None
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        row = await conn.fetchrow(
+            """
+            SELECT id, email, name, google_id, created_at,
+                   has_paid, free_analysis_used, stripe_customer_id,
+                   password_hash
+            FROM users
+            WHERE email = $1
+            """,
+            email,
+        )
+        return dict(row) if row else None
+
+
+async def get_user_by_google_id(google_id: str) -> Optional[dict]:
+    """Fetch a user by Google OAuth ID."""
+    if not is_available():
+        return None
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        row = await conn.fetchrow(
+            """
+            SELECT id, email, name, google_id, created_at,
+                   has_paid, free_analysis_used, stripe_customer_id,
+                   password_hash
+            FROM users
+            WHERE google_id = $1
+            """,
+            google_id,
+        )
+        return dict(row) if row else None
+
+
+async def update_user_payment(user_id: UUID, stripe_customer_id: str) -> bool:
+    """Mark a user as paid and store their Stripe customer ID.  Returns True on success."""
+    if not is_available():
+        return False
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        result = await conn.execute(
+            """
+            UPDATE users
+            SET has_paid = true, stripe_customer_id = $2
+            WHERE id = $1
+            """,
+            user_id, stripe_customer_id,
+        )
+        updated = result.split()[-1] != "0"  # "UPDATE N"
+        if updated:
+            log.info("Updated payment for user %s (stripe=%s)", user_id, stripe_customer_id)
+        return updated
+
+
+async def mark_free_analysis_used(user_id: UUID) -> bool:
+    """Set free_analysis_used=true for a user.  Returns True on success."""
+    if not is_available():
+        return False
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        result = await conn.execute(
+            """
+            UPDATE users
+            SET free_analysis_used = true
+            WHERE id = $1
+            """,
+            user_id,
+        )
+        updated = result.split()[-1] != "0"
+        if updated:
+            log.info("Marked free analysis used for user %s", user_id)
+        return updated
+
+
+async def get_user_analyses(user_id: UUID, limit: int = 20) -> list[dict]:
+    """Return the most recent analyses belonging to a user."""
+    if not is_available():
+        return []
+
+    pool = get_pool()
+    async with pool.acquire() as conn:  # type: ignore[union-attr]
+        rows = await conn.fetch(
+            """
+            SELECT a.id, a.site_id, a.created_at, a.overall_score,
+                   a.accessibility_score, a.seo_score, a.performance_score,
+                   a.security_score, a.content_score, a.ux_score,
+                   a.total_issues, a.critical_issues, a.execution_time_seconds,
+                   a.analysis_mode, s.domain, s.url
+            FROM analyses a
+            JOIN sites s ON a.site_id = s.id
+            WHERE a.user_id = $1
+            ORDER BY a.created_at DESC
+            LIMIT $2
+            """,
+            user_id, limit,
+        )
+        return [dict(r) for r in rows]

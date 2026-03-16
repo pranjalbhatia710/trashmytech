@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Sparkles, Globe, AlertTriangle, Users } from "lucide-react";
+import { Loader2, Sparkles, Globe, AlertTriangle, Users, Shield } from "lucide-react";
 import { TrashAnimation } from "@/components/ui/trash-animation";
 import { Typewriter } from "@/components/ui/typewriter-text";
+import { UrlInput } from "@/components/url-input";
 import { API_URL } from "@/lib/config";
 import dynamic from "next/dynamic";
 
@@ -18,6 +19,9 @@ const PrismaticBurst = dynamic(
   { ssr: false }
 );
 
+// ── Constants ─────────────────────────────────────────────────
+const FREE_ANALYSIS_KEY = "candid_free_used";
+
 // Fallback demo data (only used if API is unreachable)
 const FALLBACK_RECENT_SITES: RecentSite[] = [
   { url: "acme-store.vercel.app", domain: "acme-store.vercel.app", latest_overall_score: 34, last_analyzed: new Date(Date.now() - 2 * 60000).toISOString() },
@@ -25,6 +29,7 @@ const FALLBACK_RECENT_SITES: RecentSite[] = [
   { url: "startup-landing.com", domain: "startup-landing.com", latest_overall_score: 58, last_analyzed: new Date(Date.now() - 12 * 60000).toISOString() },
 ];
 
+// ── Types ─────────────────────────────────────────────────────
 interface RecentSite {
   url: string;
   domain: string;
@@ -41,6 +46,7 @@ interface SiteStats {
   avg_score: number | null;
 }
 
+// ── Helpers ───────────────────────────────────────────────────
 function getGradeFromScore(score: number): { letter: string; color: string } {
   if (score >= 85) return { letter: "A", color: "#22c55e" };
   if (score >= 70) return { letter: "B", color: "#84cc16" };
@@ -64,11 +70,11 @@ function formatTimeAgo(dateStr: string): string {
     if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
     return `${Math.floor(diffDays / 30)}mo ago`;
   } catch {
-    // If it's already a human-readable string (like "2 min ago"), return as-is
     return dateStr;
   }
 }
 
+// ── Animated Counter ──────────────────────────────────────────
 function AnimatedCounter({ target, duration = 2 }: { target: number; duration?: number }) {
   const [count, setCount] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
@@ -78,16 +84,14 @@ function AnimatedCounter({ target, duration = 2 }: { target: number; duration?: 
     if (hasAnimated.current) return;
     hasAnimated.current = true;
 
-    let start = 0;
     const startTime = performance.now();
 
     function step(now: number) {
       const elapsed = (now - startTime) / 1000;
       const progress = Math.min(elapsed / duration, 1);
-      // Ease out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
-      start = Math.round(eased * target);
-      setCount(start);
+      const current = Math.round(eased * target);
+      setCount(current);
       if (progress < 1) requestAnimationFrame(step);
     }
 
@@ -97,11 +101,52 @@ function AnimatedCounter({ target, duration = 2 }: { target: number; duration?: 
   return <span ref={ref}>{count.toLocaleString()}</span>;
 }
 
+// ── Paywall Gate Stub ─────────────────────────────────────────
+// When next-auth + AuthModal are built by another agent, uncomment:
+// import { useSession } from "next-auth/react";
+// import { AuthModal } from "@/components/auth-modal";
+
+function usePaywallGate() {
+  const [freeUsed, setFreeUsed] = useState(false);
+  // const { data: session } = useSession(); // uncomment when next-auth is available
+  const session = null; // stub
+
+  useEffect(() => {
+    try {
+      const used = localStorage.getItem(FREE_ANALYSIS_KEY);
+      if (used === "true") setFreeUsed(true);
+    } catch {
+      // localStorage not available
+    }
+  }, []);
+
+  const markFreeUsed = useCallback(() => {
+    try {
+      localStorage.setItem(FREE_ANALYSIS_KEY, "true");
+      setFreeUsed(true);
+    } catch {
+      // localStorage not available
+    }
+  }, []);
+
+  return {
+    /** Whether the user needs to authenticate before submitting */
+    requiresAuth: freeUsed && !session,
+    /** Mark the free analysis as consumed */
+    markFreeUsed,
+    /** Whether user is authenticated */
+    isAuthenticated: !!session,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// LANDING PAGE
+// ══════════════════════════════════════════════════════════════
 export default function Home() {
   const [url, setUrl] = useState("");
+  const [mode, setMode] = useState<"fast" | "standard" | "deep">("standard");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [isFocused, setIsFocused] = useState(false);
   const [trashActive, setTrashActive] = useState(false);
   const [trashUrl, setTrashUrl] = useState("");
   const [bgReady, setBgReady] = useState(false);
@@ -115,21 +160,26 @@ export default function Home() {
     observations?: string[];
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // const [showAuthModal, setShowAuthModal] = useState(false); // uncomment when AuthModal is ready
   const previewAbort = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const { markFreeUsed } = usePaywallGate();
+  // const { requiresAuth, markFreeUsed } = usePaywallGate(); // use when auth is ready
 
+  // ── Background fade-in ────────────────────────────────────
   useEffect(() => {
     const timer = setTimeout(() => setBgReady(true), 600);
     return () => clearTimeout(timer);
   }, []);
 
+  // ── Autofocus input ───────────────────────────────────────
   useEffect(() => {
     const timeout = setTimeout(() => inputRef.current?.focus(), 1000);
     return () => clearTimeout(timeout);
   }, []);
 
-  // Fetch recent sites and stats from API
+  // ── Fetch recent sites and stats ──────────────────────────
   useEffect(() => {
     async function fetchRecent() {
       try {
@@ -164,7 +214,7 @@ export default function Home() {
     fetchStats();
   }, []);
 
-  // Debounced preview fetch
+  // ── Debounced preview fetch ───────────────────────────────
   useEffect(() => {
     const trimmed = url.trim();
     if (!trimmed || trimmed.length < 5) {
@@ -189,7 +239,7 @@ export default function Home() {
 
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/v1/preview`,
+          `${API_URL}/v1/preview`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -214,25 +264,25 @@ export default function Home() {
     };
   }, [url]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // ── Submit handler ────────────────────────────────────────
+  const handleSubmit = useCallback(async (normalizedUrl: string) => {
     setError("");
-    let testUrl = url.trim();
-    if (!testUrl) { inputRef.current?.focus(); return; }
-    if (!testUrl.startsWith("http://") && !testUrl.startsWith("https://")) {
-      testUrl = "https://" + testUrl;
-      setUrl(testUrl);
-    }
-    try { new URL(testUrl); } catch { setError("Enter a valid URL"); return; }
+
+    // Paywall gate: when auth is ready, uncomment:
+    // if (requiresAuth) {
+    //   setShowAuthModal(true);
+    //   return;
+    // }
 
     setIsLoading(true);
     setPreview(null);
     setPreviewLoading(false);
     previewAbort.current?.abort();
+
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/v1/tests`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: testUrl }) }
+        `${API_URL}/v1/tests`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: normalizedUrl, mode }) }
       );
       if (!res.ok) {
         const data = await res.json();
@@ -241,20 +291,27 @@ export default function Home() {
         return;
       }
       const data = await res.json();
-      setTrashUrl(testUrl);
+      markFreeUsed();
+      setTrashUrl(normalizedUrl);
       setTrashActive(true);
-      router.push(`/test/${data.test_id}?url=${encodeURIComponent(testUrl)}`);
+      router.push(`/test/${data.test_id}?url=${encodeURIComponent(normalizedUrl)}`);
     } catch {
       setError("Can't reach the server. Is the backend running?");
       setIsLoading(false);
     }
-  };
+  }, [mode, router, markFreeUsed]);
 
+  // ══════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen relative overflow-hidden">
       <TrashAnimation active={trashActive} url={trashUrl} />
 
-      {/* Prismatic burst shader — ambient base layer */}
+      {/* Auth Modal stub — uncomment when AuthModal component is available:
+      <AuthModal open={showAuthModal} onClose={() => setShowAuthModal(false)} /> */}
+
+      {/* Prismatic burst shader -- ambient base layer */}
       <motion.div
         className="fixed inset-0 z-0"
         initial={{ opacity: 0 }}
@@ -285,6 +342,7 @@ export default function Home() {
         <NeuralBackground color="#e8a44a" trailOpacity={0.015} particleCount={300} speed={0.6} />
       </motion.div>
 
+      {/* Vignette overlay */}
       <div
         className="fixed inset-0 z-[2] pointer-events-none"
         style={{
@@ -293,7 +351,7 @@ export default function Home() {
       />
 
       <div className="relative z-10 min-h-screen flex flex-col">
-        {/* Header */}
+        {/* ──────────────── Header ──────────────── */}
         <motion.header
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -333,10 +391,10 @@ export default function Home() {
           </a>
         </motion.header>
 
-        {/* Hero */}
+        {/* ──────────────── Hero ──────────────── */}
         <main className="flex-1 flex flex-col items-center justify-center px-6 sm:px-8">
           <div className="max-w-[600px] w-full text-center">
-            {/* Main heading with glow */}
+            {/* Main heading */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
@@ -365,10 +423,21 @@ export default function Home() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
-              className="text-[14px] mb-3 leading-relaxed"
+              className="text-[14px] mb-2 leading-relaxed"
               style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}
             >
-              We launch your product. Not co-founders. We take 5% of the value we create.
+              AI agents stress-test your site from real user perspectives — accessibility, UX, security, and performance.
+            </motion.p>
+
+            {/* Tagline */}
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: 0.35 }}
+              className="text-[12px] mb-3 italic"
+              style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}
+            >
+              At the rate you&apos;re shipping, who&apos;s actually testing?
             </motion.p>
 
             {/* Typewriter */}
@@ -393,63 +462,59 @@ export default function Home() {
               />
             </motion.div>
 
-            {/* URL Input with animated glow */}
-            <motion.form
+            {/* ──── URL Input (hero focal point) ──── */}
+            <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.5 }}
-              onSubmit={handleSubmit}
-              className="mb-4"
+              className="mb-2"
             >
-              <motion.div
-                className="relative"
-                animate={{
-                  boxShadow: isFocused
-                    ? "0 0 0 1px rgba(232,164,74,0.4), 0 0 24px rgba(232,164,74,0.08), 0 0 48px rgba(232,164,74,0.04)"
-                    : "0 0 0 1px var(--border-default), 0 0 0 rgba(232,164,74,0)",
-                }}
-                transition={{ duration: 0.3 }}
-                style={{ borderRadius: "10px" }}
-              >
-                <div
-                  className="flex items-center gap-0"
-                  style={{
-                    backgroundColor: "var(--bg-surface)",
-                    borderRadius: "10px",
-                  }}
-                >
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://yoursite.com"
-                    disabled={isLoading}
-                    onFocus={() => setIsFocused(true)}
-                    onBlur={() => setIsFocused(false)}
-                    className="flex-1 h-[56px] px-5 bg-transparent text-[14px] outline-none placeholder:opacity-25"
-                    style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}
-                    aria-label="Enter a website URL to analyze"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="h-[44px] px-7 mr-[6px] text-[12px] font-semibold uppercase tracking-[0.1em] rounded-[7px] transition-all duration-200 flex items-center gap-2.5 disabled:opacity-50 shrink-0 cursor-pointer"
-                    style={{ fontFamily: "var(--font-display)", backgroundColor: "var(--accent)", color: "#0a0a0c" }}
-                    onMouseEnter={(e) => { if (!isLoading) e.currentTarget.style.backgroundColor = "var(--accent-hover)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "var(--accent)"; }}
-                  >
-                    {isLoading ? (
-                      <><Loader2 size={14} className="animate-spin" /><span>Testing</span></>
-                    ) : (
-                      <><span>Audit it</span><ArrowRight size={14} /></>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
-            </motion.form>
+              <UrlInput
+                ref={inputRef}
+                value={url}
+                onChange={setUrl}
+                onSubmit={handleSubmit}
+                isLoading={isLoading}
+                disabled={false}
+              />
+            </motion.div>
 
-            {/* Error */}
+            {/* Audit Mode Selector */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.4, delay: 0.55 }}
+              className="flex items-center justify-center gap-1 mb-4"
+            >
+              {(["fast", "standard", "deep"] as const).map((m) => {
+                const labels = {
+                  fast: { label: "Fast", detail: "6 agents" },
+                  standard: { label: "Standard", detail: "12 agents" },
+                  deep: { label: "Deep", detail: "30 agents" },
+                };
+                const info = labels[m];
+                const isActive = mode === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className="px-3 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 cursor-pointer flex items-center gap-1.5"
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      backgroundColor: isActive ? "rgba(232,164,74,0.1)" : "transparent",
+                      color: isActive ? "var(--accent)" : "var(--text-muted)",
+                      border: isActive ? "1px solid rgba(232,164,74,0.25)" : "1px solid transparent",
+                    }}
+                  >
+                    {info.label}
+                    <span className="text-[9px] opacity-60" style={{ fontFamily: "var(--font-mono)" }}>{info.detail}</span>
+                  </button>
+                );
+              })}
+            </motion.div>
+
+            {/* Server-side error */}
             <AnimatePresence>
               {error && (
                 <motion.div
@@ -514,7 +579,7 @@ export default function Home() {
           </div>
         </main>
 
-        {/* Recently Analyzed Sites */}
+        {/* ──────────────── Recently Analyzed ──────────────── */}
         {recentSites.length > 0 && (
           <motion.section
             initial={{ opacity: 0, y: 20 }}
@@ -522,16 +587,27 @@ export default function Home() {
             transition={{ duration: 0.6, delay: 0.7 }}
             className="px-6 sm:px-8 pb-8 max-w-[900px] mx-auto w-full"
           >
-            <div className="flex items-center gap-2 mb-4">
-              <Globe size={12} style={{ color: "var(--text-muted)" }} />
-              <span
-                className="text-[10px] uppercase tracking-[0.12em] font-medium"
-                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}
-              >
-                Recently Analyzed
-              </span>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Globe size={12} style={{ color: "var(--text-muted)" }} />
+                <span
+                  className="text-[10px] uppercase tracking-[0.12em] font-medium"
+                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}
+                >
+                  Recently Analyzed
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Shield size={10} style={{ color: "var(--text-muted)", opacity: 0.6 }} />
+                <span
+                  className="text-[9px] uppercase tracking-[0.1em]"
+                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", opacity: 0.6 }}
+                >
+                  Powered by 50 AI personas
+                </span>
+              </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {recentSites.map((site, idx) => {
                 const score = site.latest_overall_score ?? 0;
                 const grade = getGradeFromScore(score);
@@ -542,7 +618,8 @@ export default function Home() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.8 + idx * 0.06, duration: 0.4 }}
-                    className="group flex items-center gap-3 px-3.5 py-2.5 rounded-lg transition-all duration-200 no-underline"
+                    whileHover={{ y: -1, transition: { duration: 0.2 } }}
+                    className="group flex items-center gap-3 px-3.5 py-3 rounded-lg transition-all duration-200 no-underline"
                     style={{
                       backgroundColor: "var(--bg-surface)",
                       border: "1px solid var(--border-default)",
@@ -550,15 +627,17 @@ export default function Home() {
                     onMouseEnter={(e) => {
                       e.currentTarget.style.borderColor = "rgba(232,164,74,0.2)";
                       e.currentTarget.style.backgroundColor = "var(--bg-elevated)";
+                      e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.2)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.borderColor = "var(--border-default)";
                       e.currentTarget.style.backgroundColor = "var(--bg-surface)";
+                      e.currentTarget.style.boxShadow = "none";
                     }}
                   >
                     {/* Grade badge */}
                     <div
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0"
                       style={{
                         fontFamily: "var(--font-mono)",
                         backgroundColor: `${grade.color}15`,
@@ -581,7 +660,7 @@ export default function Home() {
                             className="text-[10px] tabular-nums font-semibold"
                             style={{ fontFamily: "var(--font-mono)", color: grade.color }}
                           >
-                            {Math.round(score)}
+                            {Math.round(score)}/100
                           </span>
                         )}
                         <span
@@ -592,6 +671,13 @@ export default function Home() {
                         </span>
                       </div>
                     </div>
+                    {/* Hover arrow */}
+                    <div
+                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-[10px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      &rarr;
+                    </div>
                   </motion.a>
                 );
               })}
@@ -599,7 +685,7 @@ export default function Home() {
           </motion.section>
         )}
 
-        {/* Footer stats */}
+        {/* ──────────────── Footer ──────────────── */}
         <motion.footer
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

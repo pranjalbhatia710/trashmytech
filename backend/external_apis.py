@@ -1057,6 +1057,239 @@ async def run_all_external_apis(url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Lite Mode Orchestrator — free/local checks only
+# ---------------------------------------------------------------------------
+async def run_lite_external_checks(url: str) -> dict:
+    """Run only the free, local, or non-rate-limited external checks.
+
+    This is the lite-mode counterpart of ``run_all_external_apis()``.
+    It skips: PageSpeed, Observatory, Safe Browsing, Carbon, Green Web.
+    It keeps: SSL, DNS, WHOIS/RDAP, technology detection.
+
+    Also performs lightweight robots.txt and sitemap.xml existence checks
+    (simple HTTP GETs with no API key required).
+
+    Args:
+        url: The full URL to analyze (e.g., "https://example.com").
+
+    Returns:
+        Dict with the same top-level key structure as ``run_all_external_apis()``
+        but with ``None`` for skipped (paid) APIs.
+    """
+    domain = _extract_domain(url)
+    start_time = time.monotonic()
+
+    logger.info(f"Lite external checks: starting for {url} (domain={domain})")
+
+    # Use certifi SSL context for macOS compatibility
+    ssl_ctx = None
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+
+    connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+    session = aiohttp.ClientSession(
+        timeout=SESSION_TIMEOUT,
+        headers={"User-Agent": USER_AGENT},
+        connector=connector,
+    )
+
+    try:
+        # Only free checks
+        tasks = [
+            check_dns(domain),                                                     # free
+            check_ssl(domain),                                                     # free
+            asyncio.wait_for(check_whois(domain, session), timeout=INDIVIDUAL_TIMEOUT),  # free
+            asyncio.wait_for(check_technologies(url, session=session), timeout=INDIVIDUAL_TIMEOUT),  # free
+            asyncio.wait_for(_check_robots_txt(url, session), timeout=INDIVIDUAL_TIMEOUT),  # free
+            asyncio.wait_for(_check_sitemap(url, session), timeout=INDIVIDUAL_TIMEOUT),    # free
+        ]
+
+        task_keys = [
+            "dns",
+            "ssl",
+            "whois",
+            "technologies",
+            "robots_txt",
+            "sitemap",
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        output: dict[str, Any] = {
+            # Paid APIs not run in lite mode
+            "pagespeed": None,
+            "observatory": None,
+            "safe_browsing": None,
+            "carbon": None,
+            "green_web": None,
+        }
+        apis_succeeded = 0
+        apis_failed = 0
+
+        for key, result in zip(task_keys, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Lite checks: {key} failed -- {type(result).__name__}: {result}")
+                output[key] = None
+                apis_failed += 1
+            elif result is None:
+                output[key] = None
+                apis_failed += 1
+            else:
+                output[key] = result
+                apis_succeeded += 1
+
+        elapsed_ms = round((time.monotonic() - start_time) * 1000)
+
+        output["metadata"] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "url_analyzed": url,
+            "domain": domain,
+            "analysis_mode": "lite",
+            "apis_succeeded": apis_succeeded,
+            "apis_failed": apis_failed,
+            "apis_skipped": 5,  # pagespeed, observatory, safe_browsing, carbon, green_web
+            "total_duration_ms": elapsed_ms,
+        }
+
+        logger.info(
+            f"Lite external checks: completed for {url} -- "
+            f"{apis_succeeded} succeeded, {apis_failed} failed, "
+            f"5 skipped (paid), {elapsed_ms}ms total"
+        )
+
+        return output
+
+    except Exception as e:
+        logger.error(f"Lite external checks: orchestrator error -- {e}", exc_info=True)
+        elapsed_ms = round((time.monotonic() - start_time) * 1000)
+        return {
+            "pagespeed": None,
+            "observatory": None,
+            "safe_browsing": None,
+            "carbon": None,
+            "green_web": None,
+            "dns": None,
+            "ssl": None,
+            "whois": None,
+            "technologies": None,
+            "robots_txt": None,
+            "sitemap": None,
+            "metadata": {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "url_analyzed": url,
+                "domain": domain,
+                "analysis_mode": "lite",
+                "apis_succeeded": 0,
+                "apis_failed": 6,
+                "apis_skipped": 5,
+                "total_duration_ms": elapsed_ms,
+                "error": str(e)[:200],
+            },
+        }
+
+    finally:
+        await session.close()
+
+
+# ---------------------------------------------------------------------------
+# Lite-mode helper checks (robots.txt, sitemap.xml)
+# ---------------------------------------------------------------------------
+
+async def _check_robots_txt(url: str, session: aiohttp.ClientSession) -> dict | None:
+    """Fetch and parse robots.txt for basic SEO signals.
+
+    Returns info about whether robots.txt exists, allows common bots,
+    and references a sitemap.
+    """
+    try:
+        parsed = urlparse(url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+        async with session.get(robots_url) as resp:
+            if resp.status != 200:
+                return {"exists": False, "status_code": resp.status}
+
+            text = await resp.text()
+            text_lower = text.lower()
+
+            # Parse basic signals
+            allows_all = "disallow:" not in text_lower or "disallow: \n" in text_lower or "disallow:\n" in text_lower
+            has_sitemap_ref = "sitemap:" in text_lower
+
+            # Check for AI bot permissions
+            ai_bots = {
+                "gptbot": "gptbot" in text_lower,
+                "claudebot": "claudebot" in text_lower,
+                "perplexitybot": "perplexitybot" in text_lower,
+                "googlebot": "googlebot" in text_lower,
+            }
+
+            # Extract sitemap URLs
+            sitemap_urls = []
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped.lower().startswith("sitemap:"):
+                    sitemap_urls.append(stripped.split(":", 1)[1].strip())
+
+            return {
+                "exists": True,
+                "status_code": 200,
+                "allows_all_bots": allows_all,
+                "has_sitemap_reference": has_sitemap_ref,
+                "sitemap_urls": sitemap_urls[:5],
+                "ai_bot_mentions": ai_bots,
+                "content_length": len(text),
+            }
+
+    except Exception as e:
+        logger.warning(f"robots.txt check: failed for {url} -- {e}")
+        return None
+
+
+async def _check_sitemap(url: str, session: aiohttp.ClientSession) -> dict | None:
+    """Check if sitemap.xml exists and is valid.
+
+    Tries /sitemap.xml and /sitemap_index.xml.
+    Returns basic info about sitemap presence and size.
+    """
+    try:
+        parsed = urlparse(url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+
+        for path in ("/sitemap.xml", "/sitemap_index.xml"):
+            sitemap_url = base + path
+            try:
+                async with session.get(sitemap_url) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get("Content-Type", "")
+                        text = await resp.text()
+
+                        # Basic validation: contains XML and urlset/sitemapindex
+                        is_xml = "<?xml" in text[:200] or "urlset" in text[:500] or "sitemapindex" in text[:500]
+                        url_count = text.count("<loc>")
+
+                        return {
+                            "exists": True,
+                            "url": sitemap_url,
+                            "content_type": content_type,
+                            "is_valid_xml": is_xml,
+                            "url_count": url_count,
+                            "size_bytes": len(text.encode("utf-8")),
+                        }
+            except Exception:
+                continue
+
+        return {"exists": False}
+
+    except Exception as e:
+        logger.warning(f"Sitemap check: failed for {url} -- {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # CLI for quick testing
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

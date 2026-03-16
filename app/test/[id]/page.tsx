@@ -29,8 +29,11 @@ import {
 import {
   Shield, Eye, Smartphone, Gauge, Users, AlertTriangle, Bot, Check, X,
   CheckCircle2, XCircle, ChevronDown, ExternalLink, Copy, Sparkles,
-  ArrowRight, BarChart3, Zap, TrendingUp, FileText, DollarSign,
+  ArrowRight, BarChart3, Zap, FileText, Share2,
 } from "lucide-react";
+import { ToastNotification } from "@/components/ui/toast-notification";
+import { AnimatedCounter } from "@/components/ui/animated-counter";
+import { CachedReportBanner } from "@/components/ui/cached-report-banner";
 import { DEMO_AGENTS, DEMO_REPORT, DEMO_CRAWL_DATA, DEMO_LOGS, DEMO_URL } from "@/lib/demo-data";
 import { EBAY_AGENTS, EBAY_REPORT, EBAY_CRAWL_DATA, EBAY_LOGS, EBAY_URL } from "@/lib/ebay-demo-data";
 
@@ -188,6 +191,10 @@ interface Report {
   fix_prompt?: string;
   annotated_screenshot_url?: string;
   annotated_screenshot_b64?: string;
+  audit_mode?: string;
+  cached?: boolean;
+  cached_at?: string | number;
+  created_at?: string | number;
   ai_seo?: {
     checks?: Array<{ name: string; pass: boolean; detail: string }>;
     ai_readability_score?: number;
@@ -283,6 +290,7 @@ export default function TestPage() {
   const [elapsed, setElapsed] = useState(0);
   const [issueCount, setIssueCount] = useState(0);
   const [doneCount, setDoneCount] = useState(0);
+  const [expectedAgentCount, setExpectedAgentCount] = useState(0);
   const [expandedPersona, setExpandedPersona] = useState<string | null>(null);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -292,6 +300,9 @@ export default function TestPage() {
   const [crawlStep, setCrawlStep] = useState(0);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [formWord, setFormWord] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastVariant, setToastVariant] = useState<"success" | "error" | "info">("success");
 
   const logRef = useRef<HTMLDivElement>(null);
   const startTime = useRef(Date.now());
@@ -300,7 +311,8 @@ export default function TestPage() {
   const scene = useScene();
   useEffect(() => { scene.setPhase(phase); }, [phase, scene]);
   useEffect(() => {
-    if (report?.score?.overall) scene.setScore(report.score.overall);
+    const s = Number(report?.score?.overall ?? report?.composite_scores?.overall_score ?? 0);
+    if (s) scene.setScore(s);
   }, [report, scene]);
   useEffect(() => {
     scene.setAgentProgress(agents.size, doneCount);
@@ -333,6 +345,32 @@ export default function TestPage() {
     return () => clearInterval(interval);
   }, [phase]);
 
+  // REST fallback: poll for report if WS didn't deliver it
+  useEffect(() => {
+    if (isDemo || phase !== "reporting") return;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/v1/tests/${testId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === "complete" && data.report) {
+          setReport(data.report as Report);
+          setPhase("done");
+          addLog("success", "report ready");
+          clearInterval(poll);
+        }
+      } catch { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(poll);
+  }, [phase, testId, isDemo, addLog]);
+
+  // Auto-scroll log to top (newest entries are prepended)
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = 0;
+    }
+  }, [logs.length]);
+
   // Demo mode (demo + ebay)
   useEffect(() => {
     if (!isDemo) return;
@@ -358,25 +396,58 @@ export default function TestPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testId]);
 
-  // WebSocket
+  // WebSocket with automatic retry
   useEffect(() => {
     if (isDemo) return;
-    const wsUrl = `${WS_URL}/ws/${testId}`;
-    const ws = new WebSocket(wsUrl);
+    let attempt = 0;
+    const maxRetries = 4;
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    ws.onopen = () => addLog("info", "connected to server");
+    function connect() {
+      if (cancelled) return;
+      attempt++;
+      const wsUrl = `${WS_URL}/ws/${testId}`;
+      ws = new WebSocket(wsUrl);
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        handleMessage(msg);
-      } catch { /* ignore */ }
+      ws.onopen = () => {
+        attempt = 0; // reset on successful connect
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleMessage(msg);
+        } catch { /* ignore */ }
+      };
+
+      ws.onerror = () => {
+        // Silent — retry handles it
+      };
+
+      ws.onclose = (e) => {
+        if (cancelled) return;
+        // Normal close (1000) or report already delivered — do nothing
+        if (e.code === 1000) return;
+        // Retry with exponential backoff
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          addLog("info", "reconnecting...");
+          retryTimeout = setTimeout(connect, delay);
+        } else {
+          addLog("warning", "could not reach server — refresh to retry");
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
+      ws?.close();
     };
-
-    ws.onerror = () => addLog("error", "connection error");
-    ws.onclose = (e) => { if (e.code !== 1000) addLog("warning", "connection closed"); };
-
-    return () => ws.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testId]);
 
@@ -399,8 +470,10 @@ export default function TestPage() {
       setCrawlStep(prev => prev + 1);
     } else if (p === "swarming" && status === "started") {
       setPhase("swarming");
+      const count = (msg.agent_count as number) || 12;
+      setExpectedAgentCount(count);
       const personas = msg.personas as Array<Record<string, unknown>> | undefined;
-      if (personas) {
+      if (personas && personas.length > 0) {
         const map = new Map<string, AgentData>();
         for (const persona of personas) {
           const id = persona.id as string;
@@ -418,7 +491,7 @@ export default function TestPage() {
         setAgents(map);
         setSelectedAgentId(personas[0]?.id as string || null);
       }
-      addLog("info", `deploying ${msg.agent_count} agents`);
+      addLog("info", `deploying ${count} agents`);
     } else if (p === "swarming" && status === "running") {
       const agentId = msg.agent_id as string;
       setAgents((prev) => {
@@ -517,8 +590,18 @@ export default function TestPage() {
       setPhase("reporting");
       addLog("info", "generating report...");
     } else if (p === "reporting" && status === "complete") {
-      setReport(msg.report as Report);
+      const rpt = msg.report as Report;
+      setReport(rpt);
       setPhase("done");
+      // Backfill issue count and agent count from report if WS missed swarming updates
+      const sessions = rpt?.sessions_summary ?? rpt?.narrative?.persona_verdicts ?? [];
+      if (doneCount === 0 && Array.isArray(sessions)) setDoneCount(sessions.length);
+      if (issueCount === 0) {
+        const statsTotal = (rpt?.stats as Record<string, unknown>)?.total;
+        const totalFromSessions = Array.isArray(sessions) ? sessions.reduce((sum: number, s: Record<string, unknown>) => sum + (Number(s.issues_found ?? s.issuesFound ?? 0)), 0) : 0;
+        if (totalFromSessions > 0) setIssueCount(totalFromSessions);
+        else if (typeof statsTotal === "number") setDoneCount(statsTotal);
+      }
       addLog("success", "report ready");
     } else if (p === "error") {
       addLog("error", (msg.message as string) || "error");
@@ -527,7 +610,7 @@ export default function TestPage() {
 
   const selectedAgent = selectedAgentId ? agents.get(selectedAgentId) : null;
   const agentList = Array.from(agents.values());
-  const totalAgents = agentList.length || 1;
+  const totalAgents = agentList.length || expectedAgentCount || 12;
 
   const sortedAgents = [...agentList].sort((a, b) => {
     const order = { running: 0, blocked: 1, stuck: 2, complete: 3, waiting: 4 };
@@ -538,13 +621,28 @@ export default function TestPage() {
   const focusedAgentId = selectedAgentId ?? runningAgents[0]?.id ?? sortedAgents[0]?.id ?? null;
   const focusedAgent = focusedAgentId ? agents.get(focusedAgentId) ?? null : null;
 
+  const showToast = useCallback((msg: string, variant: "success" | "error" | "info" = "success") => {
+    setToastMessage(msg);
+    setToastVariant(variant);
+    setToastVisible(true);
+  }, []);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(window.location.href);
+    const shareUrl = `${window.location.origin}/test/${testId}`;
+    navigator.clipboard.writeText(shareUrl);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    showToast("Report link copied to clipboard");
+    setTimeout(() => setCopied(false), 2500);
   };
 
-  const grade = gradeFromScore(report?.score?.overall ?? 0);
+  const handleCopyPrompt = () => {
+    navigator.clipboard.writeText(report?.fix_prompt || "");
+    setCopiedPrompt(true);
+    showToast("Fix prompt copied to clipboard");
+    setTimeout(() => setCopiedPrompt(false), 2500);
+  };
+
+  const grade = gradeFromScore(Number(report?.score?.overall ?? report?.composite_scores?.overall_score ?? 0));
 
   return (
     <div className="min-h-screen relative" style={{ backgroundColor: "var(--bg-base)" }}>
@@ -622,42 +720,63 @@ export default function TestPage() {
         </a>
 
         <div className="flex items-center gap-3">
-          {/* Running issue counter */}
+          {/* Running issue counter with animated counting */}
           {issueCount > 0 && (
             <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", damping: 14, stiffness: 200 }}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-md"
               style={{ backgroundColor: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}
             >
               <AlertTriangle size={10} style={{ color: "var(--status-fail)" }} />
-              <span className="text-[11px] font-semibold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>
-                {issueCount}
-              </span>
+              <AnimatedCounter
+                value={issueCount}
+                duration={400}
+                className="text-[11px] font-semibold"
+                style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}
+              />
               <span className="text-[9px]" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)", opacity: 0.7 }}>issues</span>
             </motion.div>
           )}
 
-          {/* Phase badge */}
-          {phase !== "done" ? (
-            <div
-              className="flex items-center gap-2 px-3 py-1 rounded-full"
-              style={{ backgroundColor: "rgba(232,164,74, 0.08)", border: "1px solid rgba(232,164,74, 0.15)" }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px rgba(232,164,74,0.5)" }} />
-              <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
-                {phase === "connecting" ? "Connecting" : phase === "crawling" ? "Scanning" : phase === "swarming" ? "Testing" : "Analyzing"}
-              </span>
-            </div>
-          ) : (
-            <div
-              className="flex items-center gap-2 px-3 py-1 rounded-full"
-              style={{ backgroundColor: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.15)" }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "var(--status-pass)" }} />
-              <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)" }}>Complete</span>
-            </div>
-          )}
+          {/* Phase badge with smooth transitions */}
+          <AnimatePresence mode="wait">
+            {phase !== "done" ? (
+              <motion.div
+                key={phase}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="flex items-center gap-2 px-3 py-1 rounded-full"
+                style={{ backgroundColor: "rgba(232,164,74, 0.08)", border: "1px solid rgba(232,164,74, 0.15)" }}
+              >
+                <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px rgba(232,164,74,0.5)" }} />
+                <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
+                  {phase === "connecting" ? "Initializing" : phase === "crawling" ? "Scanning" : phase === "swarming" ? "Swarming" : "Generating Report"}
+                </span>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="done"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", damping: 14 }}
+                className="flex items-center gap-2 px-3 py-1 rounded-full"
+                style={{ backgroundColor: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.15)" }}
+              >
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", delay: 0.1 }}
+                >
+                  <Check size={11} style={{ color: "var(--status-pass)" }} />
+                </motion.div>
+                <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)" }}>Complete</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Timer */}
           <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
@@ -667,7 +786,7 @@ export default function TestPage() {
       </header>
 
       <main className="px-4 sm:px-6 py-6 relative z-10" style={{ backgroundColor: "rgba(8,9,13,0.75)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}>
-        {/* URL banner */}
+        {/* URL banner with favicon */}
         <div className="max-w-[1180px] mx-auto mb-6">
           <div
             className="glass-card flex items-center gap-3 px-4 py-2.5 text-[12px]"
@@ -675,6 +794,17 @@ export default function TestPage() {
           >
             <span className="font-semibold uppercase text-[10px] tracking-[1px]" style={{ color: "var(--accent)" }}>target</span>
             <div className="w-px h-3" style={{ backgroundColor: "var(--border-default)" }} />
+            {testUrl && (
+              <img
+                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(testUrl)}&sz=16`}
+                alt=""
+                width={14}
+                height={14}
+                className="shrink-0 rounded-sm"
+                style={{ opacity: 0.7 }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
             <a href={testUrl} target="_blank" rel="noopener noreferrer" className="hover:underline truncate flex-1 transition-colors" style={{ color: "var(--text-secondary)" }}>
               {testUrl}
             </a>
@@ -689,6 +819,59 @@ export default function TestPage() {
             animate={{ opacity: 1 }}
             className={`${phase === "swarming" ? "max-w-[1180px]" : "max-w-[760px]"} mx-auto`}
           >
+            {/* Connecting phase - initialization sequence */}
+            {phase === "connecting" && !crawlData && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex flex-col items-center justify-center py-16"
+              >
+                <motion.div
+                  className="relative w-20 h-20 mb-6"
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 8, ease: "linear" }}
+                >
+                  <div
+                    className="absolute inset-0 rounded-full"
+                    style={{ border: "1px solid rgba(232,164,74,0.2)" }}
+                  />
+                  <motion.div
+                    className="absolute inset-2 rounded-full"
+                    style={{ border: "1px solid rgba(232,164,74,0.15)" }}
+                    animate={{ rotate: -360 }}
+                    transition={{ repeat: Infinity, duration: 6, ease: "linear" }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <motion.div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: "var(--accent)" }}
+                      animate={{ scale: [1, 1.3, 1], opacity: [0.6, 1, 0.6] }}
+                      transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                    />
+                  </div>
+                </motion.div>
+                <motion.p
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="text-[14px] font-medium mb-2"
+                  style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
+                >
+                  Initializing analysis
+                </motion.p>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="text-[11px]"
+                  style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}
+                >
+                  Connecting to {testUrl ? new URL(testUrl.startsWith("http") ? testUrl : `https://${testUrl}`).hostname : "target"} ...
+                </motion.p>
+              </motion.div>
+            )}
+
             {/* Crawl intel */}
             {crawlData && (
               <motion.div
@@ -737,32 +920,62 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Progress bar */}
+            {/* Progress bar with enhanced phase descriptions */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
-                  {phase === "connecting"
-                    ? "Connecting..."
-                    : phase === "crawling"
-                      ? "Scanning site..."
-                      : phase === "reporting"
-                        ? "Writing report..."
-                        : crawlData
-                          ? `${runningAgents.length} agents active`
-                          : `${runningAgents.length} agents active while crawl finishes`}
-                </span>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <motion.div
+                        key={i}
+                        className="w-1 h-1 rounded-full"
+                        style={{ backgroundColor: "var(--accent)" }}
+                        animate={{ opacity: [0.3, 1, 0.3] }}
+                        transition={{
+                          repeat: Infinity,
+                          duration: 1.2,
+                          delay: i * 0.2,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-[11px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                    {phase === "connecting"
+                      ? "Initializing analysis engine"
+                      : phase === "crawling"
+                        ? "Mapping site structure & elements"
+                        : phase === "reporting"
+                          ? "AI is writing your report"
+                          : runningAgents.length > 0
+                            ? `${runningAgents.length} persona${runningAgents.length !== 1 ? "s" : ""} actively testing`
+                            : "Waiting for agents to launch"}
+                  </span>
+                </div>
                 <span className="text-[11px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
-                  {doneCount}/{totalAgents}
+                  <AnimatedCounter value={doneCount} duration={300} />/{totalAgents}
                 </span>
               </div>
-              <div className="h-[3px] rounded-full overflow-hidden" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
+              <div className="h-[3px] rounded-full overflow-hidden relative" style={{ backgroundColor: "rgba(255,255,255,0.04)" }}>
                 <motion.div
-                  className="h-full rounded-full"
+                  className="h-full rounded-full relative"
                   style={{ backgroundColor: "var(--accent)" }}
                   initial={{ width: 0 }}
                   animate={{ width: `${(doneCount / totalAgents) * 100}%` }}
                   transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 />
+                {/* Shimmer on active progress */}
+                {doneCount < totalAgents && (
+                  <motion.div
+                    className="absolute top-0 h-full w-16 rounded-full"
+                    style={{
+                      background: "linear-gradient(90deg, transparent, rgba(232,164,74,0.3), transparent)",
+                      right: 0,
+                    }}
+                    animate={{ x: [-64, 0] }}
+                    transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                  />
+                )}
               </div>
             </div>
 
@@ -921,7 +1134,7 @@ export default function TestPage() {
                         Swarm
                       </span>
                       <span className="text-[10px] tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                        {runningAgents.length} active / {completedAgents.length} done
+                        <AnimatedCounter value={runningAgents.length} duration={200} /> active / <AnimatedCounter value={completedAgents.length} duration={200} /> done
                       </span>
                     </div>
 
@@ -946,14 +1159,18 @@ export default function TestPage() {
                                   opacity: 1,
                                   y: 0,
                                   boxShadow: hasCriticalFinding && agent.status === "complete"
-                                    ? ["0 0 0 rgba(239,68,68,0)", "0 0 16px rgba(239,68,68,0.3)", "0 0 0 rgba(239,68,68,0)"]
+                                    ? [
+                                        "0 0 0 0 rgba(239,68,68,0), inset 0 0 0 0 rgba(239,68,68,0)",
+                                        "0 0 20px 3px rgba(239,68,68,0.25), inset 0 0 8px 0 rgba(239,68,68,0.06)",
+                                        "0 0 0 0 rgba(239,68,68,0), inset 0 0 0 0 rgba(239,68,68,0)",
+                                      ]
                                     : "none",
                                 }}
                                 exit={{ opacity: 0 }}
                                 transition={{
                                   delay: idx * 0.02,
                                   duration: 0.3,
-                                  boxShadow: hasCriticalFinding ? { repeat: 2, duration: 1.5 } : undefined,
+                                  boxShadow: hasCriticalFinding ? { repeat: 3, duration: 1.8, ease: "easeInOut" } : undefined,
                                 }}
                                 onClick={() => setSelectedAgentId(agent.id)}
                                 className="group relative w-full overflow-hidden rounded-lg px-3 py-3 text-left transition-all duration-200"
@@ -1046,21 +1263,38 @@ export default function TestPage() {
               </div>
             )}
 
-            {/* Event log */}
-            <div ref={logRef} className="p-3 max-h-32 overflow-y-auto rounded-lg mb-4" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
-              {logs.slice(0, 40).map((log, i) => (
-                <div key={i} className="flex gap-2 mb-0.5 leading-relaxed text-[10px]">
+            {/* Event log with auto-scroll */}
+            <div
+              ref={logRef}
+              className="p-3 max-h-36 overflow-y-auto rounded-lg mb-4"
+              style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}
+              role="log"
+              aria-label="Analysis event log"
+            >
+              {logs.slice(0, 50).map((log, i) => (
+                <motion.div
+                  key={`${log.time}-${i}`}
+                  initial={i === 0 ? { opacity: 0, x: -4 } : false}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex gap-2 mb-0.5 leading-relaxed text-[10px]"
+                >
                   <span className="shrink-0 tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--border-default)" }}>{log.time}</span>
-                  <span style={{
-                    fontFamily: log.level === "error" || log.level === "warning" ? "var(--font-display)" : "var(--font-body)",
-                    fontWeight: log.level === "error" ? 600 : 400,
-                    color: log.level === "error" ? "var(--status-fail)" :
-                      log.level === "warning" ? "var(--status-warn)" :
-                        log.level === "success" ? "var(--status-pass)" : "var(--text-muted)"
-                  }}>
-                    {log.message}
+                  <span className="flex items-center gap-1.5">
+                    {log.level === "success" && <Check size={8} style={{ color: "var(--status-pass)", flexShrink: 0 }} />}
+                    {log.level === "error" && <X size={8} style={{ color: "var(--status-fail)", flexShrink: 0 }} />}
+                    {log.level === "warning" && <AlertTriangle size={8} style={{ color: "var(--status-warn)", flexShrink: 0 }} />}
+                    <span style={{
+                      fontFamily: log.level === "error" || log.level === "warning" ? "var(--font-display)" : "var(--font-body)",
+                      fontWeight: log.level === "error" ? 600 : 400,
+                      color: log.level === "error" ? "var(--status-fail)" :
+                        log.level === "warning" ? "var(--status-warn)" :
+                          log.level === "success" ? "var(--status-pass)" : "var(--text-muted)"
+                    }}>
+                      {log.message}
+                    </span>
                   </span>
-                </div>
+                </motion.div>
               ))}
               <span className="cursor-blink" />
             </div>
@@ -1142,7 +1376,7 @@ export default function TestPage() {
                   </span>
                 </motion.div>
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="text-[11px] mt-2" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                  {doneCount} agents &middot; {issueCount} issues
+                  {doneCount || (report?.sessions_summary as unknown[])?.length || 12} personas / <span style={{ color: "var(--status-fail)" }}>{issueCount || "—"} issues</span> / {elapsed}s
                 </motion.div>
               </motion.div>
             )}
@@ -1152,11 +1386,20 @@ export default function TestPage() {
         {/* ═══ REPORT ═══ */}
         {phase === "done" && report && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0, y: 30, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
             className="max-w-[960px] mx-auto mt-4 pb-16"
           >
+            {/* Cached Report Banner */}
+            {(report.cached || report.cached_at || report.created_at) && (
+              <CachedReportBanner
+                cachedAt={report.cached_at || report.created_at}
+                testUrl={testUrl}
+                className="mb-6"
+              />
+            )}
+
             {/* Score Hero - with animated gauge */}
             <div className="mb-12">
               <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-8 items-center">
@@ -1166,13 +1409,17 @@ export default function TestPage() {
                   transition={{ type: "spring", damping: 12, delay: 0.15 }}
                   className="flex flex-col items-center sm:items-start"
                 >
-                  <ScoreGauge score={report.score?.overall ?? 0} size={160} delay={0.3} />
+                  <div className="score-glow">
+                    <ScoreGauge score={Number(report.score?.overall ?? report.composite_scores?.overall_score ?? 0)} size={160} delay={0.3} />
+                  </div>
                   <div className="flex items-center gap-3 text-[11px] mt-3" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
                     <span>{report.stats?.total || 0} personas</span>
                     <span style={{ color: "var(--border-default)" }}>/</span>
-                    <span style={{ color: issueCount > 5 ? "var(--status-fail)" : "var(--text-muted)" }}>{issueCount} issues</span>
+                    <span style={{ color: issueCount > 5 ? "var(--status-fail)" : "var(--text-muted)" }}>
+                      <AnimatedCounter value={issueCount} duration={800} style={{ fontFamily: "var(--font-mono)" }} /> issues
+                    </span>
                     <span style={{ color: "var(--border-default)" }}>/</span>
-                    <span>{elapsed}s</span>
+                    <span style={{ fontFamily: "var(--font-mono)" }}>{elapsed}s</span>
                   </div>
                 </motion.div>
                 {report.score?.reasoning && (
@@ -1188,7 +1435,7 @@ export default function TestPage() {
               <div className="flex items-center gap-3 mt-6 pt-6 flex-wrap" style={{ borderTop: "1px solid var(--border-default)" }}>
                 {report.fix_prompt && (
                   <button
-                    onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
+                    onClick={handleCopyPrompt}
                     className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
                     style={{
                       fontFamily: "var(--font-display)",
@@ -1206,8 +1453,8 @@ export default function TestPage() {
                   className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
                   style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
                 >
-                  <Copy size={11} />
-                  {copied ? "Copied" : "Share link"}
+                  <Share2 size={11} />
+                  {copied ? "Copied!" : "Share report"}
                 </button>
                 <a
                   href={`/compare?url1=${encodeURIComponent(testUrl)}`}
@@ -1227,79 +1474,19 @@ export default function TestPage() {
               </div>
             </div>
 
-            {/* Revenue Impact Estimate */}
-            {(() => {
-              const score = report.score?.overall ?? 0;
-              const blocked = report.stats?.blocked ?? 0;
-              const total = report.stats?.total ?? 1;
-              const blockRate = blocked / total;
-              const conversionLoss = Math.max(0, (90 - score) * 0.03);
-              const blockedLoss = blockRate * 0.15;
-              const totalLossRate = Math.min(0.45, conversionLoss + blockedLoss);
-              const isEbayUrl = testUrl.includes("ebay");
-              const baseRevenue = isEbayUrl ? 10_300_000_000 : 1_000_000;
-              const annualLoss = Math.round(baseRevenue * totalLossRate);
-              const monthlyLoss = Math.round(annualLoss / 12);
-              const fmtMoney = (n: number) => {
-                if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-                if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-                if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-                return `$${n.toLocaleString()}`;
-              };
-              return (
-                <motion.div
-                  initial={{ opacity: 0, y: 16 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.5, delay: 0.2 }}
-                  className="mb-12 p-5 rounded-xl"
-                  style={{
-                    background: "linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(251,191,36,0.04) 100%)",
-                    border: "1px solid rgba(239,68,68,0.15)",
-                  }}
-                >
-                  <div className="flex items-center gap-2 mb-4">
-                    <DollarSign size={14} style={{ color: "var(--status-fail)" }} />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>
-                      Estimated Revenue Impact
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div>
-                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--status-fail)" }}>
-                        {fmtMoney(monthlyLoss)}
-                      </div>
-                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>lost / month</div>
-                    </div>
-                    <div>
-                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--status-warn)" }}>
-                        {fmtMoney(annualLoss)}
-                      </div>
-                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>lost / year</div>
-                    </div>
-                    <div>
-                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
-                        {Math.round(totalLossRate * 100)}%
-                      </div>
-                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>conversion loss</div>
-                    </div>
-                    <div>
-                      <div className="text-[28px] font-bold tabular-nums leading-none mb-1" style={{ fontFamily: "var(--font-mono)", color: "var(--cat-accessibility)" }}>
-                        {blocked}/{total}
-                      </div>
-                      <div className="text-[10px]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>users blocked</div>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-3 text-[11px] leading-relaxed" style={{ borderTop: "1px solid rgba(239,68,68,0.1)", fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
-                    {blocked > 0
-                      ? `${blocked} of ${total} test personas were completely blocked from completing their task. Each blocked user represents lost revenue from abandoned sessions, failed sign-ups, and broken checkout flows.`
-                      : `Based on ${total} persona tests, UX friction points are estimated to cause a ${Math.round(conversionLoss * 100)}% drop in conversion rates.`
-                    }
-                    {" "}These issues compound daily — fixing the top 3 critical items could recover {fmtMoney(Math.round(annualLoss * 0.6))} annually.
-                  </div>
-                </motion.div>
-              );
-            })()}
+            {/* Audit Mode Badge */}
+            {report.audit_mode && (
+              <div className="mb-8 flex items-center gap-2">
+                <span className="text-[9px] uppercase tracking-[0.12em] px-2 py-1 rounded" style={{
+                  fontFamily: "var(--font-display)",
+                  backgroundColor: "rgba(232,164,74,0.06)",
+                  color: "var(--accent)",
+                  border: "1px solid rgba(232,164,74,0.15)",
+                }}>
+                  {report.audit_mode} audit
+                </span>
+              </div>
+            )}
 
             {/* Category Scores - animated bars */}
             {report.category_scores && (
@@ -1444,48 +1631,6 @@ export default function TestPage() {
                         <div key={i} className="text-[11px] mb-1" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{name}</div>
                       ))}
                     </motion.div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-
-            {/* Form / Function / Purpose Analysis */}
-            {(report.narrative?.form_analysis || report.narrative?.function_analysis || report.narrative?.purpose_analysis) && (
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="mb-14"
-              >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-6" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Deep Analysis</div>
-                <div className="space-y-4">
-                  {report.narrative?.form_analysis && (
-                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(139, 92, 246, 0.03)", border: "1px solid rgba(139, 92, 246, 0.1)" }}>
-                      <div className="flex items-center gap-2 mb-3">
-                        <Eye size={13} style={{ color: "#8b5cf6" }} />
-                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "#8b5cf6" }}>Form -- Visual Design</span>
-                      </div>
-                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{report.narrative.form_analysis}</p>
-                    </div>
-                  )}
-                  {report.narrative?.function_analysis && (
-                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(59, 130, 246, 0.03)", border: "1px solid rgba(59, 130, 246, 0.1)" }}>
-                      <div className="flex items-center gap-2 mb-3">
-                        <Gauge size={13} style={{ color: "#3b82f6" }} />
-                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "#3b82f6" }}>Function -- Does It Work?</span>
-                      </div>
-                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{report.narrative.function_analysis}</p>
-                    </div>
-                  )}
-                  {report.narrative?.purpose_analysis && (
-                    <div className="p-4 rounded-lg" style={{ backgroundColor: "rgba(232, 164, 74, 0.03)", border: "1px solid rgba(232, 164, 74, 0.1)" }}>
-                      <div className="flex items-center gap-2 mb-3">
-                        <Users size={13} style={{ color: "var(--accent)" }} />
-                        <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>Purpose -- Does It Achieve Its Goal?</span>
-                      </div>
-                      <p className="text-[13px] leading-[1.8] whitespace-pre-line" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{report.narrative.purpose_analysis}</p>
-                    </div>
                   )}
                 </div>
               </motion.div>
@@ -1841,14 +1986,22 @@ export default function TestPage() {
                       </div>
                     </div>
                   )}
-                  {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (
+                  {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (() => {
+                    // Filter out accessibility items that are already shown in the dedicated audit section
+                    const a11yKeywords = ["accessibility", "a11y", "landmark", "aria", "alt text", "contrast", "screen reader", "keyboard focus", "wcag"];
+                    const hasA11yAudit = (report.narrative?.accessibility_audit?.total_violations || 0) > 0;
+                    const filtered = hasA11yAudit
+                      ? report.narrative!.what_doesnt_work!.filter(item => !a11yKeywords.some(kw => item.title.toLowerCase().includes(kw)))
+                      : report.narrative!.what_doesnt_work!;
+                    if (filtered.length === 0) return null;
+                    return (
                     <div>
                       <div className="flex items-center gap-2 mb-4">
                         <XCircle size={13} style={{ color: "var(--status-fail)" }} />
                         <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Doesn&apos;t Work</span>
                       </div>
                       <div className="space-y-3">
-                        {report.narrative.what_doesnt_work.slice(0, 4).map((item, i) => (
+                        {filtered.slice(0, 4).map((item, i) => (
                           <motion.div key={i} initial={{ opacity: 0, x: 8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
                             <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
                             <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
@@ -1856,7 +2009,8 @@ export default function TestPage() {
                         ))}
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </motion.div>
             ) : null}
@@ -1989,56 +2143,6 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Recommendations */}
-            {report.narrative?.recommendations && report.narrative.recommendations.length > 0 && (
-              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="flex items-center gap-2 mb-5">
-                  <TrendingUp size={13} style={{ color: "var(--accent)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Recommendations</span>
-                </div>
-                <div className="space-y-3">
-                  {report.narrative.recommendations.map((rec, i) => {
-                    const isObj = typeof rec === "object";
-                    return (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, x: -8 }}
-                        whileInView={{ opacity: 1, x: 0 }}
-                        viewport={{ once: true }}
-                        transition={{ delay: i * 0.04 }}
-                        className="flex gap-3 p-3 rounded-lg"
-                        style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}
-                      >
-                        <span
-                          className="text-[14px] font-bold tabular-nums shrink-0 w-6 h-6 rounded-full flex items-center justify-center"
-                          style={{
-                            fontFamily: "var(--font-mono)",
-                            color: "var(--accent)",
-                            backgroundColor: "rgba(232,164,74,0.08)",
-                            border: "1px solid rgba(232,164,74,0.15)",
-                            fontSize: "11px",
-                          }}
-                        >
-                          {i + 1}
-                        </span>
-                        <div className="flex-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                              {isObj ? rec.action : rec}
-                            </span>
-                          </div>
-                          {isObj && rec.impact && (
-                            <div className="text-[11px] mt-1 leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{rec.impact}</div>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            )}
-
             {/* Annotated Screenshot */}
             {(report.annotated_screenshot_url || report.annotated_screenshot_b64) && (
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
@@ -2058,7 +2162,7 @@ export default function TestPage() {
             <div className="flex items-center gap-3 flex-wrap">
               {report.fix_prompt && (
                 <button
-                  onClick={() => { navigator.clipboard.writeText(report.fix_prompt || ""); setCopiedPrompt(true); setTimeout(() => setCopiedPrompt(false), 2000); }}
+                  onClick={handleCopyPrompt}
                   className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
                   style={{
                     fontFamily: "var(--font-display)",
@@ -2076,8 +2180,8 @@ export default function TestPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
                 style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
               >
-                <Copy size={11} />
-                {copied ? "Copied" : "Share"}
+                <Share2 size={11} />
+                {copied ? "Copied!" : "Share report"}
               </button>
               <a
                 href="/"
@@ -2119,6 +2223,14 @@ export default function TestPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Toast Notification */}
+      <ToastNotification
+        message={toastMessage}
+        visible={toastVisible}
+        onClose={() => setToastVisible(false)}
+        variant={toastVariant}
+      />
     </div>
   );
 }

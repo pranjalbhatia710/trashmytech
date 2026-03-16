@@ -3,8 +3,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 
 /**
- * Full-screen trash bin animation overlay.
- * Shows a glowing trash can that "eats" the URL, then expands into a warp transition.
+ * Full-screen warp transition overlay.
+ * Cinematic scan-line + particle burst effect when submitting a URL.
  */
 export function TrashAnimation({ active, url }: { active: boolean; url: string }) {
   return (
@@ -14,120 +14,121 @@ export function TrashAnimation({ active, url }: { active: boolean; url: string }
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center"
-          style={{ backgroundColor: "rgba(8, 9, 13, 0.95)" }}
+          className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
+          style={{ backgroundColor: "rgba(8, 9, 13, 0.98)" }}
         >
-          {/* URL text flying into bin */}
+          {/* Radial glow pulse */}
           <motion.div
-            initial={{ opacity: 1, y: 0, scale: 1 }}
-            animate={{ opacity: 0, y: 60, scale: 0.3 }}
-            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-            className="absolute font-mono text-[13px]"
-            style={{ color: "#8b90a7", top: "38%" }}
+            className="absolute"
+            style={{
+              width: 300,
+              height: 300,
+              background: "radial-gradient(circle, rgba(232,164,74,0.15) 0%, rgba(232,164,74,0.03) 50%, transparent 70%)",
+              filter: "blur(40px)",
+            }}
+            animate={{
+              scale: [1, 1.4, 1],
+              opacity: [0.6, 1, 0.6],
+            }}
+            transition={{ duration: 1.5, ease: "easeInOut" }}
+          />
+
+          {/* Scanning ring 1 */}
+          <motion.div
+            className="absolute rounded-full"
+            style={{ border: "1px solid rgba(232,164,74,0.2)" }}
+            initial={{ width: 0, height: 0, opacity: 0.8 }}
+            animate={{ width: 600, height: 600, opacity: 0 }}
+            transition={{ duration: 1.2, ease: "easeOut", delay: 0.1 }}
+          />
+
+          {/* Scanning ring 2 */}
+          <motion.div
+            className="absolute rounded-full"
+            style={{ border: "1px solid rgba(232,164,74,0.15)" }}
+            initial={{ width: 0, height: 0, opacity: 0.6 }}
+            animate={{ width: 800, height: 800, opacity: 0 }}
+            transition={{ duration: 1.4, ease: "easeOut", delay: 0.3 }}
+          />
+
+          {/* Center dot */}
+          <motion.div
+            className="absolute w-2 h-2 rounded-full"
+            style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 20px rgba(232,164,74,0.6)" }}
+            initial={{ scale: 0 }}
+            animate={{ scale: [0, 1.5, 1] }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+          />
+
+          {/* Orbiting particles */}
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <motion.div
+              key={i}
+              className="absolute w-1 h-1 rounded-full"
+              style={{ backgroundColor: "var(--accent)", opacity: 0.6 }}
+              initial={{
+                x: Math.cos((i / 6) * Math.PI * 2) * 20,
+                y: Math.sin((i / 6) * Math.PI * 2) * 20,
+                scale: 0,
+              }}
+              animate={{
+                x: [
+                  Math.cos((i / 6) * Math.PI * 2) * 20,
+                  Math.cos((i / 6) * Math.PI * 2 + Math.PI) * 80,
+                  Math.cos((i / 6) * Math.PI * 2 + Math.PI * 2) * 200,
+                ],
+                y: [
+                  Math.sin((i / 6) * Math.PI * 2) * 20,
+                  Math.sin((i / 6) * Math.PI * 2 + Math.PI) * 80,
+                  Math.sin((i / 6) * Math.PI * 2 + Math.PI * 2) * 200,
+                ],
+                scale: [0, 1, 0],
+                opacity: [0, 0.8, 0],
+              }}
+              transition={{ duration: 1.2, delay: 0.2 + i * 0.05, ease: "easeOut" }}
+            />
+          ))}
+
+          {/* URL text — fading and compressing */}
+          <motion.div
+            initial={{ opacity: 0.7, y: 0, scale: 1, letterSpacing: "0px" }}
+            animate={{ opacity: 0, y: -8, scale: 0.95, letterSpacing: "4px" }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.05 }}
+            className="absolute font-mono text-[12px] tracking-wide"
+            style={{ color: "var(--text-muted)", top: "42%" }}
           >
             {url}
           </motion.div>
 
-          {/* Trash bin SVG */}
+          {/* Status text */}
           <motion.div
-            initial={{ scale: 0, rotate: -10 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", damping: 12, stiffness: 200 }}
-            className="relative"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 1, 1, 0] }}
+            transition={{ duration: 1.6, times: [0, 0.2, 0.7, 1], delay: 0.3 }}
+            className="absolute font-mono text-[10px] uppercase tracking-[4px]"
+            style={{ color: "var(--accent)", top: "58%", opacity: 0.7 }}
           >
-            <svg width="80" height="96" viewBox="0 0 80 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Bin body */}
-              <motion.rect
-                x="12" y="28" width="56" height="60" rx="6"
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth="2.5"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.6, ease: "easeInOut" }}
-              />
-              {/* Lid */}
-              <motion.path
-                d="M6 28h68"
-                stroke="#ef4444"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.4, delay: 0.2 }}
-              />
-              {/* Handle */}
-              <motion.path
-                d="M30 28V20a10 10 0 0 1 20 0v8"
-                stroke="#ef4444"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                fill="none"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.4, delay: 0.3 }}
-              />
-              {/* Slats */}
-              {[28, 40, 52].map((x, i) => (
-                <motion.line
-                  key={x}
-                  x1={x} y1="40" x2={x} y2="76"
-                  stroke="#ef4444"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  initial={{ pathLength: 0, opacity: 0 }}
-                  animate={{ pathLength: 1, opacity: 0.5 }}
-                  transition={{ duration: 0.3, delay: 0.5 + i * 0.1 }}
-                />
-              ))}
-            </svg>
-
-            {/* Glow behind bin */}
-            <div
-              className="absolute inset-0 -m-8 rounded-full"
-              style={{
-                background: "radial-gradient(circle, rgba(239,68,68,0.15) 0%, transparent 70%)",
-                filter: "blur(20px)",
-              }}
-            />
+            Initializing audit
           </motion.div>
 
-          {/* Lid bounce animation */}
+          {/* Horizontal scan line */}
           <motion.div
-            className="absolute"
-            style={{ top: "calc(50% - 36px)" }}
-            initial={{ rotate: 0 }}
-            animate={{ rotate: [0, -15, 0, -8, 0] }}
-            transition={{ delay: 0.7, duration: 0.5, ease: "easeInOut" }}
+            className="absolute left-0 right-0 h-px"
+            style={{
+              background: "linear-gradient(90deg, transparent 0%, rgba(232,164,74,0.4) 30%, rgba(232,164,74,0.6) 50%, rgba(232,164,74,0.4) 70%, transparent 100%)",
+            }}
+            initial={{ top: "30%", opacity: 0 }}
+            animate={{ top: "70%", opacity: [0, 1, 1, 0] }}
+            transition={{ duration: 1.0, ease: "easeInOut", delay: 0.2 }}
           />
 
-          {/* Shockwave ring */}
-          <motion.div
-            className="absolute rounded-full"
-            style={{ border: "1px solid rgba(239,68,68,0.3)" }}
-            initial={{ width: 0, height: 0, opacity: 1 }}
-            animate={{ width: 400, height: 400, opacity: 0 }}
-            transition={{ delay: 0.8, duration: 0.8, ease: "easeOut" }}
-          />
-
-          {/* "Trashing..." text */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="absolute font-mono text-[12px] uppercase tracking-[3px]"
-            style={{ color: "#ef4444", top: "64%" }}
-          >
-            Trashing...
-          </motion.div>
-
-          {/* Warp out — expanding circle that covers screen */}
+          {/* Final warp — expanding circle covers screen */}
           <motion.div
             className="absolute rounded-full"
             style={{ backgroundColor: "#08090d" }}
             initial={{ width: 0, height: 0, opacity: 0 }}
             animate={{ width: 3000, height: 3000, opacity: 1 }}
-            transition={{ delay: 1.4, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ delay: 1.3, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           />
         </motion.div>
       )}

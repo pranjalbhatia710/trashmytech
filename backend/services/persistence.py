@@ -109,10 +109,17 @@ async def persist_analysis(
     sessions: list[dict],
     crawl_data: dict,
     execution_time_seconds: Optional[float] = None,
+    user_id: Optional[str] = None,
+    analysis_mode: str = "standard",
 ) -> Optional[str]:
     """Store a completed analysis.  Returns the analysis UUID string or None.
 
     This function never raises.  All errors are logged and swallowed.
+
+    Parameters
+    ----------
+    user_id : optional UUID string of the authenticated user
+    analysis_mode : 'fast', 'standard', or 'deep'
     """
     from db.connection import is_available as db_available
     from cache.redis_client import is_available as cache_available
@@ -126,12 +133,23 @@ async def persist_analysis(
     issues = _extract_issues(report)
     analysis_id: Optional[str] = None
 
+    # Convert user_id string to UUID if provided
+    from uuid import UUID as _UUID
+    uid: Optional[_UUID] = None
+    if user_id:
+        try:
+            uid = _UUID(user_id)
+        except (ValueError, TypeError):
+            log.warning("Invalid user_id '%s' -- persisting without user", user_id)
+
     # ── 1. Database persistence ──────────────────────────────────
     if db_available():
         try:
             analysis_id = await _persist_to_db(
                 url, domain, scores, issues, report, sessions,
                 crawl_data, execution_time_seconds,
+                user_id=uid,
+                analysis_mode=analysis_mode,
             )
         except Exception:
             log.exception("Database persistence failed for %s", domain)
@@ -162,6 +180,8 @@ async def _persist_to_db(
     sessions: list[dict],
     crawl_data: dict,
     execution_time_seconds: Optional[float],
+    user_id: Optional[Any] = None,
+    analysis_mode: str = "standard",
 ) -> Optional[str]:
     """Write everything to PostgreSQL inside a logical transaction group."""
     from db import queries
@@ -187,6 +207,8 @@ async def _persist_to_db(
         execution_time_seconds=execution_time_seconds,
         report_json=report_for_storage,
         site_map_json=crawl_data.get("site_map"),
+        analysis_mode=analysis_mode,
+        user_id=user_id,
     )
     if analysis_id is None:
         return None

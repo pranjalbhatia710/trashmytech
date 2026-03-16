@@ -102,3 +102,25 @@ class StatsResponse(BaseModel):
     total_analyses: int = 0
     total_issues: int = 0
     avg_score: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# User models
+# ---------------------------------------------------------------------------
+
+class UserRecord(BaseModel):
+    """A row from the users table (public fields only -- no password_hash)."""
+    id: UUID
+    email: str
+    name: Optional[str] = None
+    has_paid: bool = False
+    free_analysis_used: bool = False
+    created_at: datetime
+
+
+class UserCreate(BaseModel):
+    """Request body for creating a new user."""
+    email: str
+    name: Optional[str] = None
+    google_id: Optional[str] = None
+    password: Optional[str] = None

@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@auth/core": "^0.37.0",
     "@next/font": "^14.2.15",
+    "@stripe/stripe-js": "^4.0.0",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
@@ -20,11 +22,13 @@
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
+    "next-auth": "^4.24.0",
     "ogl": "^1.0.11",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
+    "stripe": "^17.0.0",
     "styled-components": "^6.3.11",
     "tailwind-merge": "^3.5.0",
     "three": "^0.183.2"

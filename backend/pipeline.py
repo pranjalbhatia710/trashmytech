@@ -2,6 +2,10 @@
 
 Extracted from main.py for readability. Each phase is a standalone async
 function that streams progress over the WebSocket via ``send()``.
+
+Supports two analysis modes controlled by ANALYSIS_MODE env var:
+- "lite" (default): skips paid external APIs, uses only free/local checks
+- "full": runs all external APIs (PageSpeed, Observatory, Safe Browsing, etc.)
 """
 
 from __future__ import annotations
@@ -17,7 +21,8 @@ from crawler import crawl_site
 from personas import sample_personas
 from agent import run_agent_local
 from annotator import annotate_screenshot
-from external_apis import run_all_external_apis
+from external_apis import run_all_external_apis, run_lite_external_checks
+from analysis_lite import should_run_external_apis, get_analysis_mode
 from scoring import calculate_scores
 from quick_wins import generate_quick_wins
 from report import generate_report, generate_fix_prompt
@@ -70,11 +75,12 @@ async def run_swarm(
     agent_count: int,
     send: Send,
     auth_profile: str | None = None,
+    max_steps: int = 8,
 ) -> list[dict]:
     """Launch persona agents in parallel browsers, streaming results live."""
     from playwright.async_api import async_playwright as pw_start
 
-    personas = sample_personas(agent_count)
+    personas = sample_personas(agent_count, url=url)
     num_browsers = min(int(os.getenv("NUM_BROWSERS", "5")), len(personas))
     headed = os.getenv("HEADLESS", "true").lower() == "false"
 
@@ -153,6 +159,7 @@ async def run_swarm(
                 url, persona, site_context,
                 on_step_screenshot=on_screenshot,
                 shared_browser=browser,
+                max_steps=max_steps,
             )
         except Exception as exc:
             log.error("Agent %s crashed: %s", persona["name"], str(exc)[:150])
@@ -319,12 +326,16 @@ async def run_scoring_and_report(
 # ── Phase 4: Persist ────────────────────────────────────────────────
 
 async def run_persist(url: str, report: dict, agent_results: list[dict],
-                      crawl_data: dict, duration: float, send: Send) -> str | None:
+                      crawl_data: dict, duration: float, send: Send,
+                      user_id: str | None = None,
+                      analysis_mode: str = "standard") -> str | None:
     """Save analysis to DB + cache. Returns analysis_id or None."""
     try:
         analysis_id = await persist_analysis(
             url=url, report=report, sessions=agent_results,
             crawl_data=crawl_data, execution_time_seconds=duration,
+            user_id=user_id,
+            analysis_mode=analysis_mode,
         )
         if analysis_id:
             await send({"phase": "persisted", "analysis_id": analysis_id})
@@ -418,5 +429,20 @@ def _build_scoring_external(ext: dict | None) -> dict:
     grammar = ext.get("grammar_errors")
     if grammar is not None:
         out["grammar_errors"] = grammar
+
+    # Lite-mode enrichments: robots.txt and sitemap data
+    robots = ext.get("robots_txt", {})
+    if robots and robots.get("exists"):
+        # Feed sitemap presence from robots.txt into ai_seo-like signals
+        out.setdefault("robots_txt", robots)
+
+    sitemap = ext.get("sitemap", {})
+    if sitemap and sitemap.get("exists"):
+        out.setdefault("sitemap", sitemap)
+
+    # Track analysis mode in scoring external data
+    metadata = ext.get("metadata", {})
+    if metadata.get("analysis_mode"):
+        out["analysis_mode"] = metadata["analysis_mode"]
 
     return out

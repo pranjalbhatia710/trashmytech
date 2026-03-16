@@ -32,8 +32,11 @@ from services.persistence import persist_analysis, normalize_domain
 from auth.auth_manager import (list_profiles as list_auth_profiles,
                                delete_profile as delete_auth_profile,
                                create_auth_profile)
+from auth.user_auth import router as user_auth_router
+from auth.stripe_webhook import router as stripe_webhook_router
 from pipeline import run_crawl, run_swarm, run_scoring_and_report, run_persist
-from external_apis import run_all_external_apis
+from external_apis import run_all_external_apis, run_lite_external_checks
+from analysis_lite import should_run_external_apis, get_analysis_mode
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("trashmy")
@@ -42,7 +45,14 @@ load_dotenv()
 
 # ── Config ──────────────────────────────────────────────────────────
 
-AGENT_COUNT = int(os.getenv("AGENT_COUNT", "30"))
+AGENT_COUNT = int(os.getenv("AGENT_COUNT", "12"))
+
+# Audit mode configs: (persona_count, max_steps_per_agent)
+AUDIT_MODES = {
+    "fast":     (6, 6),
+    "standard": (12, 8),
+    "deep":     (30, 12),
+}
 USE_MODAL = os.getenv("USE_MODAL", "false").lower() == "true"
 
 RATE_LIMIT_MAX = 5
@@ -75,6 +85,10 @@ app.add_middleware(
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
+
+# ── Register auth & payment routers ──────────────────────────────
+app.include_router(user_auth_router, prefix="/v1/auth", tags=["auth"])
+app.include_router(stripe_webhook_router, prefix="/v1/stripe", tags=["stripe"])
 
 
 # ── In-memory stores ───────────────────────────────────────────────
@@ -136,6 +150,7 @@ async def health():
     return {
         "status": "ok", "version": "2.0.0",
         "agent_count": AGENT_COUNT, "use_modal": USE_MODAL,
+        "analysis_mode": get_analysis_mode(),
         "database": "available" if db_available() else "unavailable",
         "cache": "available" if cache_available() else "unavailable",
     }
@@ -219,12 +234,18 @@ async def create_test(request: Request, force_refresh: bool = Query(False)):
         tid, _ = idempotency_cache[url]
         return {"test_id": tid, "status": tests_store.get(tid, {}).get("status", "queued")}
 
+    # Audit mode
+    mode = body.get("mode", "standard")
+    if mode not in AUDIT_MODES:
+        mode = "standard"
+
     # Create test
     test_id = str(uuid.uuid4())
     tests_store[test_id] = {
         "test_id": test_id, "url": url, "status": "queued",
         "created_at": now, "crawl_data": None, "agent_results": [],
         "report": None, "auth_profile": body.get("auth_profile"),
+        "mode": mode, "user_id": body.get("user_id"),
     }
     rate_limit_store[client_ip].append(now)
     idempotency_cache[url] = (test_id, now)
@@ -538,6 +559,8 @@ poll(); setInterval(poll, 2000);
 # ===================================================================
 
 _active_pipelines: set[str] = set()
+# Map test_id -> list of active WebSocket connections (supports reconnects)
+_ws_subscribers: dict[str, list[WebSocket]] = defaultdict(list)
 
 @app.websocket("/ws/{test_id}")
 async def ws_pipeline(websocket: WebSocket, test_id: str):
@@ -545,45 +568,93 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
     test = tests_store.get(test_id)
     if not test:
-        await websocket.send_json({"phase": "error", "message": f"Test '{test_id}' not found."})
-        await websocket.close()
+        try:
+            await websocket.send_json({"phase": "error", "message": f"Test '{test_id}' not found."})
+            await websocket.close()
+        except Exception:
+            pass
         return
 
-    # Deduplicate (React strict mode double-mounts)
+    # If pipeline already running, subscribe as a late-joiner
     if test_id in _active_pipelines:
-        await asyncio.sleep(0.5)
-        if test_id in _active_pipelines:
-            await websocket.close()
-            return
+        _ws_subscribers[test_id].append(websocket)
+        # Send catch-up state so the frontend knows the current phase
+        try:
+            status = test.get("status", "queued")
+            if status == "complete" and test.get("report"):
+                await websocket.send_json({"phase": "reporting", "status": "complete", "report": test["report"]})
+            else:
+                # Tell the frontend what phase we're in + how many agents
+                mode = test.get("mode", "standard")
+                agent_count, _ = AUDIT_MODES.get(mode, AUDIT_MODES["standard"])
+                if status in ("crawling", "swarming", "reporting"):
+                    await websocket.send_json({"phase": "crawling", "status": "started"})
+                if status in ("swarming", "reporting"):
+                    # Send crawl data if available
+                    if test.get("crawl_data"):
+                        await websocket.send_json({"phase": "crawling", "status": "complete", "data": test["crawl_data"]})
+                    await websocket.send_json({"phase": "swarming", "status": "started", "agent_count": agent_count, "personas": []})
+        except Exception:
+            pass
+        # Keep connection alive until pipeline finishes or client disconnects
+        try:
+            while True:
+                await websocket.receive_text()
+        except (WebSocketDisconnect, Exception):
+            pass
+        finally:
+            try:
+                _ws_subscribers[test_id].remove(websocket)
+            except ValueError:
+                pass
+        return
+
     _active_pipelines.add(test_id)
+    _ws_subscribers[test_id].append(websocket)
 
     url = test["url"]
-    _ws_closed = False
 
     async def send(data: dict):
-        nonlocal _ws_closed
-        if _ws_closed:
-            return
-        try:
-            await websocket.send_json(data)
-        except Exception:
-            _ws_closed = True
+        """Broadcast to all subscribed WebSocket clients."""
+        dead: list[WebSocket] = []
+        for ws in _ws_subscribers.get(test_id, []):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            try:
+                _ws_subscribers[test_id].remove(ws)
+            except ValueError:
+                pass
 
     try:
+        # Resolve audit mode settings
+        mode = test.get("mode", "standard")
+        agent_count, max_steps = AUDIT_MODES.get(mode, AUDIT_MODES["standard"])
+
         # Start crawl and swarm together so agents begin immediately after connect.
         test["status"] = "crawling"
-        _log_event("info", f"[{test_id[:8]}] crawl started for {url}")
+        _log_event("info", f"[{test_id[:8]}] crawl started for {url} (mode={mode})")
         crawl_task = asyncio.create_task(run_crawl(url, send))
 
         # External APIs also run in parallel with the live test.
-        ext_task = asyncio.create_task(run_all_external_apis(url))
+        # In lite mode, only free/local checks run (SSL, DNS, WHOIS, tech detection).
+        analysis_mode = get_analysis_mode()
+        if should_run_external_apis():
+            ext_task = asyncio.create_task(run_all_external_apis(url))
+            _log_event("info", f"[{test_id[:8]}] external APIs: full mode")
+        else:
+            ext_task = asyncio.create_task(run_lite_external_checks(url))
+            _log_event("info", f"[{test_id[:8]}] external APIs: lite mode (free checks only)")
 
         test["status"] = "swarming"
-        _log_event("info", f"[{test_id[:8]}] swarming {AGENT_COUNT} agents")
+        _log_event("info", f"[{test_id[:8]}] swarming {agent_count} agents (mode={mode})")
         swarm_task = asyncio.create_task(
             run_swarm(
-                url, {}, AGENT_COUNT, send,
+                url, {}, agent_count, send,
                 auth_profile=test.get("auth_profile"),
+                max_steps=max_steps,
             )
         )
 
@@ -606,6 +677,8 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         _log_event("info", f"[{test_id[:8]}] scoring and reporting")
         report = await run_scoring_and_report(url, crawl_data, agent_results, external_api_data, send)
 
+        report["audit_mode"] = mode
+        report["analysis_mode"] = analysis_mode
         test["report"] = report
         test["status"] = "complete"
 
@@ -629,7 +702,9 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
 
         # Phase 4: Persist
         duration = time.time() - test["created_at"]
-        analysis_id = await run_persist(url, report, agent_results, crawl_data, duration, send)
+        analysis_id = await run_persist(url, report, agent_results, crawl_data, duration, send,
+                                        user_id=test.get("user_id"),
+                                        analysis_mode=mode)
         if analysis_id:
             test["analysis_id"] = analysis_id
             _log_event("info", f"[{test_id[:8]}] persisted as {analysis_id[:8]}")
@@ -643,10 +718,12 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         await send({"phase": "error", "message": str(exc)[:300]})
     finally:
         _active_pipelines.discard(test_id)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        # Close all subscriber connections
+        for ws in _ws_subscribers.pop(test_id, []):
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
 
 # ── Entrypoint ─────────────────────────────────────────────────────

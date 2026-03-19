@@ -26,7 +26,8 @@ from analysis_lite import should_run_external_apis, get_analysis_mode
 from scoring import calculate_scores
 from quick_wins import generate_quick_wins
 from report import generate_report, generate_fix_prompt
-from dspy_modules import score_emotional_journey, generate_user_voice, generate_one_thing
+from dspy_modules import (score_emotional_journey, generate_user_voice, generate_one_thing,
+                          detect_workflows, analyze_funnel, generate_consolidated_report)
 from services.persistence import persist_analysis
 
 log = logging.getLogger("trashmy.pipeline")
@@ -77,6 +78,7 @@ async def run_swarm(
     send: Send,
     auth_profile: str | None = None,
     max_steps: int = 8,
+    workflow_data: dict | None = None,
 ) -> list[dict]:
     """Launch persona agents in parallel browsers, streaming results live."""
     from playwright.async_api import async_playwright as pw_start
@@ -117,6 +119,10 @@ async def run_swarm(
         "has_h1": seo.get("has_h1", False),
         "auth_profile": auth_profile,
     }
+
+    # Inject workflow steps so agents follow the detected primary workflow
+    if workflow_data and isinstance(workflow_data.get("workflow_steps"), list):
+        site_context["workflow_steps"] = workflow_data["workflow_steps"]
 
     # Screenshot streaming via async queue
     screenshot_queue: asyncio.Queue = asyncio.Queue()
@@ -285,8 +291,44 @@ async def run_scoring_and_report(
     agent_results: list[dict],
     external_api_data: dict | None,
     send: Send,
+    workflow_data: dict | None = None,
 ) -> dict:
     """Calculate scores, quick wins, generate report with fix prompt."""
+
+    # ── Workflow detection (right after crawl, informs funnel analysis) ──
+    if workflow_data is None:
+        try:
+            links = crawl_data.get("links", [])
+            links_summary = json.dumps(
+                [{"text": l.get("text", ""), "href": l.get("href", "")} for l in links[:50]],
+                default=str,
+            )
+            forms = crawl_data.get("forms", [])
+            forms_summary = json.dumps(forms[:20], default=str)
+            buttons = crawl_data.get("buttons", [])
+            buttons_summary = json.dumps(
+                [{"text": b.get("text", ""), "type": b.get("type", "")} for b in buttons[:30]],
+                default=str,
+            )
+            visible_text = crawl_data.get("visible_text", "")[:2000]
+            if not visible_text:
+                # Fallback: extract from page text in crawl data
+                visible_text = crawl_data.get("page_text", "")[:2000]
+
+            workflow_data = await asyncio.to_thread(
+                detect_workflows,
+                crawl_data.get("title", ""),
+                url,
+                links_summary,
+                forms_summary,
+                buttons_summary,
+                visible_text,
+            )
+            log.info("Workflow detected: site_type=%s, steps=%d",
+                     workflow_data.get("site_type"), len(workflow_data.get("workflow_steps", [])))
+        except Exception as exc:
+            log.warning("Workflow detection failed (non-fatal): %s", exc)
+            workflow_data = None
 
     # Build external data for scoring
     scoring_ext = _build_scoring_external(external_api_data) if external_api_data else {}
@@ -419,6 +461,93 @@ async def run_scoring_and_report(
         report.setdefault("emotional_journeys", {})
         report.setdefault("user_voices", {})
         report.setdefault("the_one_thing", None)
+
+    # ── Workflow, Funnel Analysis, Consolidated Report ──
+    import json as _json2
+
+    # Attach workflow data
+    report["workflow"] = workflow_data
+
+    # Funnel analysis
+    try:
+        if workflow_data and workflow_data.get("workflow_steps"):
+            # Build agent results summary for funnel analysis
+            agent_summaries = []
+            for ar in agent_results:
+                persona = ar.get("persona", {})
+                steps = ar.get("steps") or ar.get("actions") or []
+                agent_summaries.append({
+                    "persona_name": persona.get("name", "Unknown"),
+                    "persona_category": persona.get("category", ""),
+                    "task_completed": ar.get("task_completed", False),
+                    "max_workflow_step": ar.get("max_workflow_step"),
+                    "total_workflow_steps": ar.get("total_workflow_steps"),
+                    "steps_taken": ar.get("steps_taken", len(steps)),
+                    "dead_ends": ar.get("dead_ends", []),
+                    "errors": ar.get("errors", [])[:5],
+                    "actions_summary": [
+                        {
+                            "step": s.get("step"),
+                            "action": s.get("action"),
+                            "target": (s.get("target") or "")[:60],
+                            "reasoning": (s.get("reasoning") or "")[:100],
+                            "executed": s.get("executed", True),
+                            "workflow_step": s.get("workflow_step"),
+                        }
+                        for s in steps[:15]
+                    ],
+                })
+
+            funnel_result = await asyncio.to_thread(
+                analyze_funnel,
+                workflow_data.get("site_type", "other"),
+                workflow_data.get("primary_workflow", ""),
+                _json2.dumps(workflow_data.get("workflow_steps", []), default=str),
+                _json2.dumps(agent_summaries, default=str),
+            )
+            report["funnel_analysis"] = funnel_result
+        else:
+            report["funnel_analysis"] = None
+    except Exception as exc:
+        log.warning("Funnel analysis failed (non-fatal): %s", exc)
+        report["funnel_analysis"] = None
+
+    # Consolidated executive report
+    try:
+        narrative = report.get("narrative", {})
+        persona_verdicts = narrative.get("persona_verdicts", [])
+        outcomes_parts_c = []
+        for pv in persona_verdicts:
+            outcomes_parts_c.append(f"{pv.get('name', '?')}: {pv.get('outcome', '?')}")
+        persona_outcomes_c = "; ".join(outcomes_parts_c) or "No persona data."
+
+        overall_s = float(report.get("score", {}).get("overall", 50))
+        the_one_thing_val = report.get("the_one_thing", "") or ""
+
+        cat_scores = {}
+        for cat_name, cat_data in (report.get("category_scores") or {}).items():
+            if isinstance(cat_data, dict):
+                cat_scores[cat_name] = cat_data.get("score", 0)
+            else:
+                cat_scores[cat_name] = cat_data
+
+        top_issues_c = _json2.dumps(narrative.get("top_issues", [])[:5], default=str)
+        funnel_json = _json2.dumps(report.get("funnel_analysis") or {}, default=str)
+
+        consolidated = await asyncio.to_thread(
+            generate_consolidated_report,
+            (workflow_data or {}).get("site_type", "other"),
+            overall_s,
+            the_one_thing_val,
+            funnel_json,
+            _json2.dumps(cat_scores, default=str),
+            top_issues_c,
+            persona_outcomes_c,
+        )
+        report["consolidated"] = consolidated
+    except Exception as exc:
+        log.warning("Consolidated report failed (non-fatal): %s", exc)
+        report["consolidated"] = None
 
     return report
 

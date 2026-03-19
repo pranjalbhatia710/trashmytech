@@ -216,6 +216,30 @@ interface Report {
     one_word_feeling: string;
   }>;
   the_one_thing?: string;
+  workflow?: {
+    site_type?: string;
+    primary_workflow?: string;
+    workflow_steps?: string[];
+    secondary_workflows?: string[];
+    drop_off_risk_points?: string[];
+  };
+  funnel_analysis?: {
+    funnel_stages?: Array<{
+      step: string;
+      attempted: number;
+      completed: number;
+      drop_off_rate: number;
+      primary_blockers: string[];
+    }>;
+    biggest_drop_off?: string;
+    conversion_estimate?: string;
+  };
+  consolidated?: {
+    executive_narrative?: string;
+    grade_justification?: string;
+    risk_assessment?: string;
+    competitive_position?: string;
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -1528,6 +1552,65 @@ export default function TestPage() {
               </div>
             )}
 
+            {/* Consolidated Executive Narrative */}
+            {report.consolidated?.executive_narrative && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+                className="mb-14 p-6 rounded-xl"
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.02)",
+                  border: "1px solid var(--border-default)",
+                }}
+              >
+                <div className="flex items-center gap-2 mb-5">
+                  <FileText size={13} style={{ color: "var(--accent)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                    Executive Summary
+                  </span>
+                </div>
+                <div className="space-y-4">
+                  <p className="text-[14px] leading-[1.8]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
+                    {report.consolidated.executive_narrative}
+                  </p>
+                  {report.consolidated.grade_justification && (
+                    <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.12)" }}>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                        Grade Justification
+                      </span>
+                      <p className="text-[13px] leading-[1.6]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                        {report.consolidated.grade_justification}
+                      </p>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {report.consolidated.risk_assessment && (
+                      <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.12)" }}>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>
+                          Risk if Unfixed
+                        </span>
+                        <p className="text-[12px] leading-[1.6]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                          {report.consolidated.risk_assessment}
+                        </p>
+                      </div>
+                    )}
+                    {report.consolidated.competitive_position && (
+                      <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.12)" }}>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--status-pass)" }}>
+                          Competitive Position
+                        </span>
+                        <p className="text-[12px] leading-[1.6]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                          {report.consolidated.competitive_position}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* Category Scores - animated bars */}
             {report.category_scores && (
               <TooltipProvider delayDuration={100}>
@@ -1581,6 +1664,116 @@ export default function TestPage() {
                   </div>
                 </motion.div>
               </TooltipProvider>
+            )}
+
+            {/* Funnel Drop-off Visualization */}
+            {report.funnel_analysis?.funnel_stages && report.funnel_analysis.funnel_stages.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: 0.15 }}
+                className="mb-16"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <ArrowRight size={13} style={{ color: "var(--text-muted)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                    Workflow Funnel
+                  </span>
+                  {report.workflow?.primary_workflow && (
+                    <span className="text-[10px] ml-1" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)", opacity: 0.7 }}>
+                      -- {report.workflow.primary_workflow}
+                    </span>
+                  )}
+                </div>
+                {report.funnel_analysis.biggest_drop_off && (
+                  <p className="text-[12px] mb-4 leading-[1.6]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
+                    {report.funnel_analysis.biggest_drop_off}
+                  </p>
+                )}
+                <div className="space-y-2.5">
+                  {report.funnel_analysis.funnel_stages.map((stage, idx) => {
+                    const completionRate = stage.attempted > 0
+                      ? Math.round(((stage.completed / stage.attempted) * 100))
+                      : 0;
+                    const barColor = completionRate > 80
+                      ? "var(--status-pass)"
+                      : completionRate >= 40
+                        ? "#f59e0b"
+                        : "var(--status-fail)";
+                    const barBg = completionRate > 80
+                      ? "rgba(34,197,94,0.08)"
+                      : completionRate >= 40
+                        ? "rgba(245,158,11,0.08)"
+                        : "rgba(239,68,68,0.08)";
+                    return (
+                      <motion.div
+                        key={idx}
+                        initial={{ opacity: 0, x: -12 }}
+                        whileInView={{ opacity: 1, x: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: 0.05 * idx }}
+                        className="rounded-lg p-3"
+                        style={{ backgroundColor: barBg, border: `1px solid ${barColor}22` }}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold tabular-nums w-5 text-center" style={{ fontFamily: "var(--font-mono)", color: barColor }}>
+                              {idx + 1}
+                            </span>
+                            <span className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                              {stage.step}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                              {stage.completed}/{stage.attempted}
+                            </span>
+                            <span className="text-[12px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: barColor }}>
+                              {completionRate}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full rounded-full overflow-hidden" style={{ height: 4, backgroundColor: "rgba(255,255,255,0.05)" }}>
+                          <motion.div
+                            initial={{ width: 0 }}
+                            whileInView={{ width: `${completionRate}%` }}
+                            viewport={{ once: true }}
+                            transition={{ duration: 0.8, delay: 0.1 * idx, ease: [0.16, 1, 0.3, 1] }}
+                            className="h-full rounded-full"
+                            style={{ backgroundColor: barColor }}
+                          />
+                        </div>
+                        {stage.drop_off_rate > 20 && stage.primary_blockers && stage.primary_blockers.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {stage.primary_blockers.slice(0, 3).map((blocker, bi) => (
+                              <span key={bi} className="text-[10px] px-2 py-0.5 rounded-full" style={{
+                                fontFamily: "var(--font-body)",
+                                color: barColor,
+                                backgroundColor: `${barColor}11`,
+                                border: `1px solid ${barColor}22`,
+                              }}>
+                                {blocker}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+                </div>
+                {report.funnel_analysis.conversion_estimate && (
+                  <div className="mt-4 flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.12)" }}>
+                    <Gauge size={12} style={{ color: "var(--accent)" }} />
+                    <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                      Est. Conversion:
+                    </span>
+                    <span className="text-[12px]" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>
+                      {report.funnel_analysis.conversion_estimate}
+                    </span>
+                  </div>
+                )}
+              </motion.div>
             )}
 
             {/* Executive Summary */}

@@ -441,3 +441,171 @@ def generate_one_thing(overall_score: float, top_issues: str, persona_outcomes: 
         return result.one_thing.strip()
     except Exception as e:
         return f"Could not generate the one thing: {str(e)[:100]}"
+
+
+# ---------------------------------------------------------------------------
+# 9. Workflow Detection
+# ---------------------------------------------------------------------------
+
+class WorkflowDetector(dspy.Signature):
+    """Analyze a website's structure to determine what type of site it is and what user workflows should be tested.
+    Base this ONLY on the actual page data — links, forms, buttons, text content."""
+    page_title: str = dspy.InputField()
+    page_url: str = dspy.InputField()
+    links_summary: str = dspy.InputField(desc="First 50 links found on the page")
+    forms_summary: str = dspy.InputField(desc="Forms found on the page")
+    buttons_summary: str = dspy.InputField(desc="Buttons found on the page")
+    visible_text_snippet: str = dspy.InputField(desc="First 2000 chars of visible text")
+
+    site_type: str = dspy.OutputField(desc="One of: ecommerce, saas, portfolio, blog, news, social, government, education, healthcare, other")
+    primary_workflow: str = dspy.OutputField(desc="The main thing users come here to DO, e.g. 'browse products and purchase', 'sign up for free trial', 'read articles'")
+    workflow_steps: list[str] = dspy.OutputField(desc="Ordered list of 4-8 steps a user would take to complete the primary workflow, e.g. ['land on homepage', 'search for product', 'view product page', 'add to cart', 'go to checkout', 'enter shipping info', 'enter payment', 'confirm order']")
+    secondary_workflows: list[str] = dspy.OutputField(desc="2-3 other important workflows, e.g. ['contact support', 'read reviews', 'compare products']")
+    drop_off_risk_points: list[str] = dspy.OutputField(desc="3-5 steps where users are most likely to abandon, e.g. ['checkout page — payment form too complex', 'signup — too many required fields']")
+
+
+_workflow_detector = None
+
+def detect_workflows(page_title: str, page_url: str, links_summary: str,
+                     forms_summary: str, buttons_summary: str,
+                     visible_text: str) -> dict:
+    """Detect site type and primary workflow using DSPy."""
+    ensure_configured()
+    global _workflow_detector
+    if _workflow_detector is None:
+        _workflow_detector = dspy.ChainOfThought(WorkflowDetector)
+
+    try:
+        result = _workflow_detector(
+            page_title=page_title,
+            page_url=page_url,
+            links_summary=links_summary,
+            forms_summary=forms_summary,
+            buttons_summary=buttons_summary,
+            visible_text_snippet=visible_text[:2000],
+        )
+        return {
+            "site_type": result.site_type,
+            "primary_workflow": result.primary_workflow,
+            "workflow_steps": result.workflow_steps,
+            "secondary_workflows": result.secondary_workflows,
+            "drop_off_risk_points": result.drop_off_risk_points,
+        }
+    except Exception as e:
+        return {
+            "site_type": "other",
+            "primary_workflow": "browse the site",
+            "workflow_steps": ["land on homepage", "explore navigation", "view content", "leave"],
+            "secondary_workflows": [],
+            "drop_off_risk_points": [f"Could not detect workflows: {str(e)[:100]}"],
+        }
+
+
+# ---------------------------------------------------------------------------
+# 10. Funnel Drop-off Analysis
+# ---------------------------------------------------------------------------
+
+class FunnelAnalysis(dspy.Signature):
+    """Analyze where users drop off in the primary workflow funnel.
+    This is the most actionable insight — exactly which step loses the most users and why."""
+    site_type: str = dspy.InputField()
+    primary_workflow: str = dspy.InputField()
+    workflow_steps: str = dspy.InputField(desc="JSON list of expected workflow steps")
+    agent_results_summary: str = dspy.InputField(desc="JSON summary of each agent's progress through the workflow")
+
+    funnel_stages: list[dict] = dspy.OutputField(desc="List of dicts, each with 'step', 'attempted' (count), 'completed' (count), 'drop_off_rate' (percent), 'primary_blockers' (list of strings)")
+    biggest_drop_off: str = dspy.OutputField(desc="Which step has the highest drop-off and why, in one sentence")
+    conversion_estimate: str = dspy.OutputField(desc="What percentage of users would likely complete the full workflow based on the data")
+
+
+_funnel_analyzer = None
+
+def analyze_funnel(site_type: str, primary_workflow: str,
+                   workflow_steps: str, agent_results_summary: str) -> dict:
+    """Analyze funnel drop-off across agent results using DSPy."""
+    ensure_configured()
+    global _funnel_analyzer
+    if _funnel_analyzer is None:
+        module = dspy.ChainOfThought(FunnelAnalysis)
+        module.set_lm(get_report_lm())
+        _funnel_analyzer = module
+
+    try:
+        result = _funnel_analyzer(
+            site_type=site_type,
+            primary_workflow=primary_workflow,
+            workflow_steps=workflow_steps,
+            agent_results_summary=agent_results_summary,
+        )
+        return {
+            "funnel_stages": result.funnel_stages,
+            "biggest_drop_off": result.biggest_drop_off,
+            "conversion_estimate": result.conversion_estimate,
+        }
+    except Exception as e:
+        return {
+            "funnel_stages": [],
+            "biggest_drop_off": f"Could not analyze funnel: {str(e)[:100]}",
+            "conversion_estimate": "unknown",
+        }
+
+
+# ---------------------------------------------------------------------------
+# 11. Consolidated Executive Report
+# ---------------------------------------------------------------------------
+
+class ConsolidatedReport(dspy.Signature):
+    """Synthesize all analysis data into a tight, consolidated executive report.
+    This replaces scattered findings with a single narrative that tells the complete story.
+    Write for a founder who has 2 minutes to understand what's wrong with their site."""
+    site_type: str = dspy.InputField()
+    overall_score: float = dspy.InputField()
+    the_one_thing: str = dspy.InputField()
+    funnel_analysis: str = dspy.InputField(desc="JSON funnel drop-off data")
+    category_scores: str = dspy.InputField(desc="JSON scores per category")
+    top_issues: str = dspy.InputField(desc="JSON top issues")
+    persona_outcomes_summary: str = dspy.InputField()
+
+    executive_narrative: str = dspy.OutputField(desc="3-4 paragraph narrative telling the complete story: what this site is, who it serves, what's working, what's broken, and exactly what to fix first. Reference specific data.")
+    grade_justification: str = dspy.OutputField(desc="2 sentences explaining why this grade, not higher or lower")
+    risk_assessment: str = dspy.OutputField(desc="One sentence: what happens if they don't fix the top issue")
+    competitive_position: str = dspy.OutputField(desc="One sentence comparing this site's quality to typical sites in its category")
+
+
+_consolidated_reporter = None
+
+def generate_consolidated_report(site_type: str, overall_score: float,
+                                 the_one_thing: str, funnel_analysis: str,
+                                 category_scores: str, top_issues: str,
+                                 persona_outcomes_summary: str) -> dict:
+    """Generate a consolidated executive report using DSPy."""
+    ensure_configured()
+    global _consolidated_reporter
+    if _consolidated_reporter is None:
+        module = dspy.ChainOfThought(ConsolidatedReport)
+        module.set_lm(get_report_lm())
+        _consolidated_reporter = module
+
+    try:
+        result = _consolidated_reporter(
+            site_type=site_type,
+            overall_score=overall_score,
+            the_one_thing=the_one_thing,
+            funnel_analysis=funnel_analysis,
+            category_scores=category_scores,
+            top_issues=top_issues,
+            persona_outcomes_summary=persona_outcomes_summary,
+        )
+        return {
+            "executive_narrative": result.executive_narrative,
+            "grade_justification": result.grade_justification,
+            "risk_assessment": result.risk_assessment,
+            "competitive_position": result.competitive_position,
+        }
+    except Exception as e:
+        return {
+            "executive_narrative": f"Could not generate consolidated report: {str(e)[:100]}",
+            "grade_justification": "",
+            "risk_assessment": "",
+            "competitive_position": "",
+        }

@@ -379,6 +379,19 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
         behavioral_rules=_build_behavioral_rules(persona),
     )
 
+    # ── Workflow-aware prompting ──
+    workflow_steps = site_context.get("workflow_steps")
+    if workflow_steps and isinstance(workflow_steps, list) and len(workflow_steps) > 0:
+        steps_text = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(workflow_steps))
+        system_prompt += (
+            "\n\nPRIMARY WORKFLOW TO TEST:\n"
+            f"Your primary goal is to complete this workflow:\n{steps_text}\n\n"
+            "At each step, report: did you complete it? What blocked you? "
+            "How did it make you feel? If you can't proceed to the next step, "
+            "explain exactly why."
+        )
+    current_workflow_step = 0
+
     pw = None
     browser = None
     try:
@@ -413,11 +426,24 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
         for step in range(max_steps):
             state = await _extract_page_state(page)
 
+            # Build workflow progress hint
+            workflow_hint = ""
+            if workflow_steps and isinstance(workflow_steps, list) and len(workflow_steps) > 0:
+                if current_workflow_step < len(workflow_steps):
+                    workflow_hint = (
+                        f"\n\nWORKFLOW PROGRESS: You are on step {current_workflow_step + 1} "
+                        f"of {len(workflow_steps)}: \"{workflow_steps[current_workflow_step]}\". "
+                        f"Try to complete this step, then move to the next."
+                    )
+                else:
+                    workflow_hint = "\n\nWORKFLOW PROGRESS: You have completed all workflow steps."
+
             user_prompt = (
                 f"CURRENT URL: {page.url}\n\n"
                 f"VISIBLE TEXT:\n{state['visible_text']}\n\n"
                 f"INTERACTIVE ELEMENTS:\n{_format_elements(state['elements'])}\n\n"
                 f"Step {step + 1} of {max_steps}. What do you do next?"
+                f"{workflow_hint}"
             )
 
             decision = await _ask_llm(model, system_prompt, user_prompt)
@@ -430,11 +456,26 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
                 "value": decision.get("value", ""),
                 "reasoning": decision.get("reasoning", ""),
                 "timestamp_ms": int((time.time() - session_start) * 1000),
+                "workflow_step": current_workflow_step if workflow_steps else None,
             }
 
             exec_result = await _execute_action(page, decision, persona, state["elements"], _adv_rng=adv_rng)
             action_record["executed"] = exec_result["executed"]
             action_record["error"] = exec_result.get("error")
+
+            # Track workflow progress: advance step when reasoning mentions
+            # completing the current step or moving to the next action
+            if workflow_steps and current_workflow_step < len(workflow_steps):
+                reasoning_lower = decision.get("reasoning", "").lower()
+                current_step_lower = workflow_steps[current_workflow_step].lower()
+                # Advance if the agent's action is relevant to the current workflow
+                # step (simple keyword overlap heuristic)
+                step_keywords = set(current_step_lower.split())
+                reasoning_words = set(reasoning_lower.split())
+                overlap = step_keywords & reasoning_words - {"the", "a", "to", "and", "or", "on", "in", "for"}
+                if (len(overlap) >= 2 and exec_result["executed"]) or \
+                   ("next" in reasoning_lower and "step" in reasoning_lower):
+                    current_workflow_step += 1
 
             if exec_result.get("error"):
                 all_errors.append(f"Step {step + 1}: {exec_result['error']}")
@@ -483,11 +524,14 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
             if _own_pw: await _own_pw.stop()
         except Exception: pass
 
-    return _make_result(persona, actions_log, all_errors, dead_ends, task_completed, session_start, console_errors, final_url, len(actions_log))
+    return _make_result(persona, actions_log, all_errors, dead_ends, task_completed, session_start, console_errors, final_url, len(actions_log),
+                        max_workflow_step=current_workflow_step if workflow_steps else None,
+                        total_workflow_steps=len(workflow_steps) if workflow_steps else None)
 
 
-def _make_result(persona, actions, errors, dead_ends, completed, start_time, console_errors, final_url, steps):
-    return {
+def _make_result(persona, actions, errors, dead_ends, completed, start_time, console_errors, final_url, steps,
+                  max_workflow_step=None, total_workflow_steps=None):
+    result = {
         "agent_id": persona.get("id"),
         "persona": {
             "id": persona.get("id"),
@@ -505,6 +549,10 @@ def _make_result(persona, actions, errors, dead_ends, completed, start_time, con
         "steps_taken": steps,
         "issues_found": len(errors) + len(dead_ends),
     }
+    if max_workflow_step is not None:
+        result["max_workflow_step"] = max_workflow_step
+        result["total_workflow_steps"] = total_workflow_steps
+    return result
 
 
 # ---------------------------------------------------------------------------

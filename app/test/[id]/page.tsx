@@ -200,6 +200,22 @@ interface Report {
     ai_readability_score?: number;
     [key: string]: unknown;
   };
+  emotional_journeys?: Record<string, {
+    stages: Array<{
+      stage: string;
+      confusion: number;
+      trust: number;
+      frustration: number;
+      delight: number;
+      intent_to_return: number;
+    }>;
+    overall_sentiment: string;
+  }>;
+  user_voices?: Record<string, {
+    verbatim_feedback: string;
+    one_word_feeling: string;
+  }>;
+  the_one_thing?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -1400,6 +1416,30 @@ export default function TestPage() {
               />
             )}
 
+            {/* The One Thing — single most important takeaway */}
+            {report.the_one_thing && (
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
+                className="mb-10 p-5 rounded-xl"
+                style={{
+                  backgroundColor: "rgba(232,164,74,0.04)",
+                  border: "1px solid rgba(232,164,74,0.2)",
+                }}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <Zap size={14} style={{ color: "var(--accent)" }} />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                    The One Thing
+                  </span>
+                </div>
+                <p className="text-[18px] sm:text-[22px] font-bold leading-[1.4]" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                  {report.the_one_thing}
+                </p>
+              </motion.div>
+            )}
+
             {/* Score Hero - with animated gauge */}
             <div className="mb-12">
               <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-8 items-center">
@@ -1855,6 +1895,39 @@ export default function TestPage() {
                                   <p className="text-[11px] leading-relaxed mb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{v.narrative}</p>
                                 )}
 
+                                {/* User Voice Panel */}
+                                {report.user_voices?.[v.persona_id] && (
+                                  <div className="mb-3 p-3 rounded-lg" style={{ backgroundColor: "rgba(232,164,74,0.03)", border: "1px solid rgba(232,164,74,0.1)" }}>
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>In Their Words</span>
+                                      {report.user_voices[v.persona_id].one_word_feeling && report.user_voices[v.persona_id].one_word_feeling !== "unknown" && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{
+                                          fontFamily: "var(--font-display)",
+                                          backgroundColor: (() => {
+                                            const f = report.user_voices![v.persona_id].one_word_feeling;
+                                            if (["delighted", "satisfied", "impressed", "happy"].includes(f)) return "rgba(74,222,128,0.1)";
+                                            if (["frustrated", "angry", "annoyed", "furious"].includes(f)) return "rgba(248,113,113,0.1)";
+                                            if (["confused", "lost", "overwhelmed"].includes(f)) return "rgba(251,191,36,0.1)";
+                                            return "rgba(148,163,184,0.1)";
+                                          })(),
+                                          color: (() => {
+                                            const f = report.user_voices![v.persona_id].one_word_feeling;
+                                            if (["delighted", "satisfied", "impressed", "happy"].includes(f)) return "var(--status-pass)";
+                                            if (["frustrated", "angry", "annoyed", "furious"].includes(f)) return "var(--status-fail)";
+                                            if (["confused", "lost", "overwhelmed"].includes(f)) return "var(--status-warn)";
+                                            return "var(--text-muted)";
+                                          })(),
+                                        }}>
+                                          {report.user_voices[v.persona_id].one_word_feeling}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[12px] leading-[1.7] italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-primary)" }}>
+                                      &ldquo;{report.user_voices[v.persona_id].verbatim_feedback}&rdquo;
+                                    </p>
+                                  </div>
+                                )}
+
                                 {(v.form_verdict || v.function_verdict || v.purpose_verdict) && (
                                   <div className="space-y-2 mb-3">
                                     {v.form_verdict && (
@@ -1954,6 +2027,87 @@ export default function TestPage() {
                           )}
                         </AnimatePresence>
                       </motion.div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Emotional Journey Map */}
+            {report.emotional_journeys && Object.keys(report.emotional_journeys).length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                className="mb-14"
+              >
+                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-5">
+                  <BarChart3 size={13} style={{ color: "var(--accent)" }} />
+                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Emotional Journey</span>
+                </div>
+                <div className="space-y-6">
+                  {Object.entries(report.emotional_journeys).map(([pid, journey]) => {
+                    if (!journey.stages || journey.stages.length === 0) return null;
+                    const personaVerdict = report.narrative?.persona_verdicts?.find(pv => pv.persona_id === pid);
+                    const personaName = personaVerdict?.name || personaVerdict?.persona_name || pid;
+                    const dimensions = [
+                      { key: "trust" as const, label: "Trust", color: "#22c55e" },
+                      { key: "delight" as const, label: "Delight", color: "#3b82f6" },
+                      { key: "confusion" as const, label: "Confusion", color: "#f59e0b" },
+                      { key: "frustration" as const, label: "Frustration", color: "#ef4444" },
+                      { key: "intent_to_return" as const, label: "Return Intent", color: "#8b5cf6" },
+                    ];
+                    return (
+                      <div key={pid} className="p-4 rounded-xl" style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{personaName}</span>
+                        </div>
+                        {journey.overall_sentiment && (
+                          <p className="text-[10px] leading-relaxed mb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{journey.overall_sentiment}</p>
+                        )}
+                        {/* Stage labels */}
+                        <div className="flex gap-1 mb-2">
+                          <div className="w-[72px] shrink-0" />
+                          {journey.stages.map((stage, si) => (
+                            <div key={si} className="flex-1 text-center">
+                              <span className="text-[8px] uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{stage.stage}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Dimension rows */}
+                        {dimensions.map((dim) => (
+                          <div key={dim.key} className="flex items-center gap-1 mb-1.5">
+                            <span className="text-[9px] w-[72px] shrink-0 text-right pr-2" style={{ fontFamily: "var(--font-display)", color: dim.color }}>{dim.label}</span>
+                            {journey.stages.map((stage, si) => {
+                              const val = stage[dim.key];
+                              return (
+                                <div key={si} className="flex-1 flex items-center justify-center">
+                                  <div
+                                    className="rounded-sm"
+                                    style={{
+                                      width: `${Math.max(14, val * 10)}%`,
+                                      height: "6px",
+                                      backgroundColor: dim.color,
+                                      opacity: 0.15 + (val / 10) * 0.85,
+                                      transition: "all 0.3s ease",
+                                    }}
+                                    title={`${dim.label}: ${val}/10`}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                        {/* Scale legend */}
+                        <div className="flex items-center gap-1 mt-2">
+                          <div className="w-[72px] shrink-0" />
+                          <div className="flex-1 flex items-center justify-between">
+                            <span className="text-[8px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.5 }}>1</span>
+                            <span className="text-[8px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.5 }}>10</span>
+                          </div>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>

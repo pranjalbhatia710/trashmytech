@@ -1,5 +1,6 @@
 """trashmy.tech — AI agent engine using Gemini for browser-based user testing."""
 
+import base64
 import hashlib
 import json
 import asyncio
@@ -342,7 +343,9 @@ async def _execute_action(page, decision: dict, persona: dict, elements: list[di
 # Core agent loop
 # ---------------------------------------------------------------------------
 
-async def _agent_loop(url: str, persona: dict, site_context: dict, model, max_steps: int = 8) -> dict:
+async def _agent_loop(url: str, persona: dict, site_context: dict, model,
+                      max_steps: int = 8, shared_browser=None,
+                      on_step_screenshot=None) -> dict:
     from playwright.async_api import async_playwright
 
     session_start = time.time()
@@ -351,6 +354,8 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, max_st
     all_errors: list[str] = []
     task_completed = False
     final_url = url
+    _own_pw = None
+    _own_browser = None
 
     # Deterministic RNG for adversarial inputs (seeded by persona + URL)
     adv_seed = int(hashlib.sha256(f"{persona.get('id', '')}:{url}".encode()).hexdigest(), 16) % (2**32)
@@ -377,9 +382,15 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, max_st
     pw = None
     browser = None
     try:
-        pw = await async_playwright().start()
         viewport = persona.get("viewport", {"width": 1280, "height": 720})
-        browser = await pw.chromium.launch(headless=True)
+        if shared_browser:
+            browser = shared_browser
+        else:
+            _own_pw = await async_playwright().start()
+            browser = await _own_pw.chromium.launch(
+                headless=os.getenv("HEADLESS", "true").lower() != "false"
+            )
+            _own_browser = browser
         context = await browser.new_context(
             viewport=viewport,
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -431,6 +442,16 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, max_st
             if not exec_result["executed"] and decision["action"] not in ("stuck", "done"):
                 dead_ends.append(f"Step {step + 1}: Could not {decision['action']} '{decision.get('target', '')}'")
 
+            # Capture screenshot after action
+            try:
+                ss_bytes = await page.screenshot(type="jpeg", quality=50)
+                ss_b64 = base64.b64encode(ss_bytes).decode()
+                action_record["screenshot_b64"] = ss_b64
+                if on_step_screenshot:
+                    await on_step_screenshot(persona["id"], step + 1, ss_b64)
+            except Exception:
+                pass
+
             actions_log.append(action_record)
 
             try:
@@ -452,10 +473,14 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model, max_st
         all_errors.append(f"Agent crash: {traceback.format_exc()[:500]}")
     finally:
         try:
-            if browser: await browser.close()
+            if context: await context.close()
+        except Exception: pass
+        # Only close browser/playwright if we created them
+        try:
+            if _own_browser: await _own_browser.close()
         except Exception: pass
         try:
-            if pw: await pw.stop()
+            if _own_pw: await _own_pw.stop()
         except Exception: pass
 
     return _make_result(persona, actions_log, all_errors, dead_ends, task_completed, session_start, console_errors, final_url, len(actions_log))
@@ -498,7 +523,10 @@ async def run_agent_local(url: str, persona: dict, site_context: dict,
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-2.0-flash")
-    return await _agent_loop(url, persona, site_context, model, max_steps=max_steps)
+    return await _agent_loop(url, persona, site_context, model,
+                             max_steps=max_steps,
+                             shared_browser=shared_browser,
+                             on_step_screenshot=on_step_screenshot)
 
 
 async def run_swarm_local(url: str, personas: list[dict], site_context: dict) -> list[dict]:

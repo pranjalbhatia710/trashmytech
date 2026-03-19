@@ -618,37 +618,18 @@ async def generate_report(
             report["error"] = "GEMINI_API_KEY not set"
             return report
 
-        client = get_client()
+        # Use DSPy for structured, grounded narrative generation
+        from dspy_modules import generate_narrative
+        import asyncio as _aio
 
-        prompt = (
-            f"REPORT SCHEMA:\n{REPORT_SCHEMA}\n\n"
-            f"TEST DATA:\n{payload}"
+        narrative = await _aio.to_thread(
+            generate_narrative,
+            payload,
+            effective_score,
+            composite_scores.get("letter_grade", "C") if composite_scores else "C",
         )
 
-        # Structured JSON output for detailed reports
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=REPORT_MODEL,
-            messages=[
-                {"role": "system", "content": GEMINI_REPORT_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_completion_tokens=32000,
-        )
-
-        raw = response.choices[0].message.content.strip()
-        # Should be clean JSON, but strip fences just in case
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            raw = raw.strip()
-
-        narrative = json.loads(raw)
-
-        # Map the new schema to our report structure
-        # Keep the deterministic overall score — only take reasoning from Gemini
+        # Map DSPy output to report structure
         report["score"]["reasoning"] = narrative.get("score_reasoning", "")
         report["score"]["confidence"] = narrative.get("confidence", "moderate")
 
@@ -707,8 +688,8 @@ async def generate_report(
                 "persona_name": s["persona"]["name"],
                 "screenshots": [
                     {
-                        "step": step["step_number"],
-                        "description": step.get("result", ""),
+                        "step": step.get("step_number") or step.get("step"),
+                        "description": step.get("result") or step.get("reasoning") or "",
                         "screenshot_b64": step.get("screenshot_b64"),
                     }
                     for step in s.get("steps", [])
@@ -863,13 +844,13 @@ If external_api_findings is present, also include a "Security Headers & Infrastr
 
 Output ONLY the prompt text. Make it clear, actionable, and ready to paste. Do not wrap in JSON."""
 
-    response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=REPORT_MODEL,
-        messages=[
-            {"role": "system", "content": "You generate actionable developer prompts for fixing website issues."},
-            {"role": "user", "content": prompt},
-        ],
-        max_completion_tokens=4000,
+    from dspy_modules import generate_fix_prompt as _dspy_fix
+    result = await asyncio.to_thread(
+        _dspy_fix,
+        url,
+        str(score),
+        json.dumps(top_issues[:10], default=str),
+        json.dumps(recommendations[:8], default=str),
+        json.dumps(a11y, default=str),
     )
-    return response.choices[0].message.content.strip()
+    return result

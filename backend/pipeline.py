@@ -26,6 +26,7 @@ from analysis_lite import should_run_external_apis, get_analysis_mode
 from scoring import calculate_scores
 from quick_wins import generate_quick_wins
 from report import generate_report, generate_fix_prompt
+from dspy_modules import score_emotional_journey, generate_user_voice, generate_one_thing
 from services.persistence import persist_analysis
 
 log = logging.getLogger("trashmy.pipeline")
@@ -223,18 +224,23 @@ def _make_error_result(persona: dict, exc: Exception) -> dict:
 
 async def _stream_agent_result(result: dict, persona: dict, send: Send, url: str) -> dict:
     """Process one agent result: stream summary + annotated screenshot."""
+    # Support both old "steps" format and new "actions" format
+    raw_steps = result.get("steps") or result.get("actions") or []
     step_summaries = [
         {
-            "step": s.get("step_number"), "action": s.get("action"),
-            "target": (s.get("target_element") or "")[:60],
-            "result": (s.get("result") or "")[:80],
+            "step": s.get("step_number") or s.get("step"),
+            "action": s.get("action"),
+            "target": (s.get("target_element") or s.get("target") or "")[:60],
+            "result": (s.get("result") or s.get("reasoning") or "")[:80],
             "target_size": s.get("target_size_px"),
             "timestamp_ms": s.get("timestamp_ms"),
             "click_strategy": s.get("click_strategy"),
             "failure_classification": s.get("failure_classification"),
         }
-        for s in result.get("steps", [])
+        for s in raw_steps
     ]
+    # Normalize steps back onto result so report.py can find them
+    result["steps"] = raw_steps
 
     await send({
         "phase": "swarming",
@@ -251,7 +257,7 @@ async def _stream_agent_result(result: dict, persona: dict, send: Send, url: str
 
     # Annotate last screenshot with findings
     findings = result.get("findings", [])
-    steps = result.get("steps", [])
+    steps = raw_steps
     if findings and steps:
         last_b64 = next(
             (s["screenshot_b64"] for s in reversed(steps) if s.get("screenshot_b64")),
@@ -319,6 +325,100 @@ async def run_scoring_and_report(
     except Exception as e:
         log.warning("Fix prompt generation failed: %s", e)
         report["fix_prompt"] = None
+
+    # ── Candid Report V2: Emotional Journeys, User Voices, The One Thing ──
+    try:
+        import json as _json
+
+        # 1. Emotional journey scores for each agent result
+        emotional_journeys: dict[str, dict] = {}
+        for ar in agent_results:
+            persona = ar.get("persona", {})
+            pid = persona.get("id", ar.get("agent_id", ""))
+            steps = ar.get("steps") or ar.get("actions") or []
+            transcript = _json.dumps([
+                {
+                    "step": s.get("step_number") or s.get("step"),
+                    "action": s.get("action"),
+                    "target": (s.get("target_element") or s.get("target") or "")[:80],
+                    "result": (s.get("result") or s.get("reasoning") or "")[:120],
+                    "failure": s.get("failure_classification", {}).get("type") if s.get("failure_classification") else None,
+                }
+                for s in steps[:20]
+            ], default=str)
+            try:
+                ej = await asyncio.to_thread(
+                    score_emotional_journey,
+                    persona.get("name", "Unknown"),
+                    persona.get("description", ""),
+                    transcript,
+                )
+                emotional_journeys[pid] = ej
+            except Exception as exc:
+                log.warning("Emotional journey failed for %s: %s", pid, exc)
+                emotional_journeys[pid] = {"stages": [], "overall_sentiment": "unavailable"}
+        report["emotional_journeys"] = emotional_journeys
+
+        # 2. User voice for each persona verdict
+        user_voices: dict[str, dict] = {}
+        persona_verdicts = report.get("narrative", {}).get("persona_verdicts", [])
+        for pv in persona_verdicts:
+            pid = pv.get("persona_id", "")
+            # Build session summary from the verdict narrative and issues
+            session_summary_parts = []
+            if pv.get("narrative"):
+                session_summary_parts.append(pv["narrative"])
+            if pv.get("primary_barrier"):
+                session_summary_parts.append(f"Primary barrier: {pv['primary_barrier']}")
+            if pv.get("issues_encountered"):
+                session_summary_parts.append(f"Issues: {', '.join(pv['issues_encountered'][:5])}")
+            if pv.get("notable_moments"):
+                session_summary_parts.append(pv["notable_moments"])
+            session_summary = " ".join(session_summary_parts) or "No detailed session data available."
+            outcome = pv.get("outcome", "struggled")
+            try:
+                uv = await asyncio.to_thread(
+                    generate_user_voice,
+                    pv.get("name", pv.get("persona_name", "Unknown")),
+                    str(pv.get("age", "unknown")),
+                    pv.get("category", "general user"),
+                    session_summary,
+                    outcome,
+                )
+                user_voices[pid] = uv
+            except Exception as exc:
+                log.warning("User voice failed for %s: %s", pid, exc)
+                user_voices[pid] = {"verbatim_feedback": "unavailable", "one_word_feeling": "unknown"}
+        report["user_voices"] = user_voices
+
+        # 3. The One Thing
+        narrative = report.get("narrative", {})
+        top_issues_json = _json.dumps(narrative.get("top_issues", [])[:5], default=str)
+        # Build persona outcomes summary
+        outcomes_parts = []
+        for pv in persona_verdicts:
+            outcomes_parts.append(f"{pv.get('name', '?')}: {pv.get('outcome', '?')}")
+        persona_outcomes_str = "; ".join(outcomes_parts) or "No persona data."
+        qw_json = _json.dumps((report.get("quick_wins") or [])[:5], default=str)
+
+        try:
+            the_one_thing = await asyncio.to_thread(
+                generate_one_thing,
+                float(report.get("score", {}).get("overall", 50)),
+                top_issues_json,
+                persona_outcomes_str,
+                qw_json,
+            )
+            report["the_one_thing"] = the_one_thing
+        except Exception as exc:
+            log.warning("The One Thing failed: %s", exc)
+            report["the_one_thing"] = None
+
+    except Exception as e:
+        log.warning("Candid Report V2 enrichment failed (non-fatal): %s", e)
+        report.setdefault("emotional_journeys", {})
+        report.setdefault("user_voices", {})
+        report.setdefault("the_one_thing", None)
 
     return report
 

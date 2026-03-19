@@ -172,29 +172,15 @@ async def get_events():
 @app.get("/v1/keyword")
 async def extract_keyword(url: str):
     from urllib.parse import urlparse
+    from dspy_modules import extract_brand
     try:
         parsed = urlparse(url if "://" in url else f"https://{url}")
         fallback = (parsed.netloc or parsed.path).split(":")[0].replace("www.", "").split(".")[0].upper()
     except Exception:
         fallback = "SITE"
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return {"keyword": fallback}
-
-    try:
-        client = get_client()
-        resp = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=MODEL_FAST,
-            messages=[{"role": "user",
-                       "content": f"What is the brand name from this URL? Return ONLY the single brand/company name word, max 10 chars. URL: {url}"}],
-            max_completion_tokens=20,
-        )
-        kw = resp.choices[0].message.content.strip().strip('"\'.,!?:').upper()
-        return {"keyword": kw if kw and len(kw) <= 14 and " " not in kw else fallback}
-    except Exception:
-        return {"keyword": fallback}
+    kw = await asyncio.to_thread(extract_brand, url, fallback)
+    return {"keyword": kw}
 
 
 # ── Test CRUD ──────────────────────────────────────────────────────
@@ -439,29 +425,12 @@ async def preview_url(request: Request):
 
     try:
         import httpx
+        from dspy_modules import preview_site
         async with httpx.AsyncClient(follow_redirects=True, timeout=15) as http:
             resp = await http.get(url, headers={"User-Agent": "TrashmyTech/2.0"})
             page_html = resp.text[:8000]
 
-        client = get_client()
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=MODEL_FAST,
-            messages=[
-                {"role": "system", "content": (
-                    "You analyze websites. Return a JSON object with exactly these fields:\n"
-                    '- "site_name": the name or title of the site\n'
-                    '- "description": one sentence describing what this site does\n'
-                    '- "audience": who the target audience is (one sentence)\n'
-                    '- "observations": an array of exactly 3 strings, each a brief UX, accessibility, or performance observation\n'
-                    "Be specific and concise."
-                )},
-                {"role": "user", "content": f"Analyze this website at {url}. Here is the page HTML:\n\n{page_html}"},
-            ],
-            response_format={"type": "json_object"},
-            max_completion_tokens=500,
-        )
-        result = json.loads(response.choices[0].message.content.strip())
+        result = await asyncio.to_thread(preview_site, url, page_html)
         preview_cache[url] = result
         return result
     except Exception as exc:
@@ -682,14 +651,20 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
         test["report"] = report
         test["status"] = "complete"
 
-        # Strip large screenshots from WS payload, serve via REST
+        # Strip large data from WS payload to stay under WebSocket size limits
         ws_report = json.loads(json.dumps(report, default=str))
         screenshots_store[test_id] = {}
+
+        # Remove annotated screenshot
         if "annotated_screenshot_b64" in ws_report:
             ws_report.pop("annotated_screenshot_b64")
             ws_report["annotated_screenshot_url"] = f"/v1/tests/{test_id}/annotated-screenshot"
+
+        # Strip all base64 screenshots from sessions, replace with REST URLs
         for session in ws_report.get("sessions_summary", []):
             pid = session.get("persona_id", "")
+            # Remove session_log (can be huge)
+            session.pop("session_log", None)
             for ss in session.get("screenshots", []):
                 b64 = ss.pop("screenshot_b64", None)
                 if b64:
@@ -697,6 +672,22 @@ async def ws_pipeline(websocket: WebSocket, test_id: str):
                     screenshots_store[test_id][key] = b64
                     ss["screenshot_url"] = f"/v1/tests/{test_id}/screenshots/{key}"
 
+        # Remove any remaining large base64 strings anywhere in the report
+        def _strip_b64(obj):
+            if isinstance(obj, dict):
+                for k in list(obj.keys()):
+                    if isinstance(obj[k], str) and len(obj[k]) > 50000:
+                        obj[k] = None  # strip strings > 50KB (likely base64)
+                    elif isinstance(obj[k], (dict, list)):
+                        _strip_b64(obj[k])
+            elif isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, (dict, list)):
+                        _strip_b64(item)
+        _strip_b64(ws_report)
+
+        report_json = json.dumps({"phase": "reporting", "status": "complete", "report": ws_report})
+        _log_event("info", f"[{test_id[:8]}] WS report payload: {len(report_json)} bytes")
         await send({"phase": "reporting", "status": "complete", "report": ws_report})
         _log_event("info", f"[{test_id[:8]}] report sent to client")
 

@@ -638,7 +638,7 @@ export default function TestPage() {
       if (doneCount === 0 && Array.isArray(sessions)) setDoneCount(sessions.length);
       if (issueCount === 0) {
         const statsTotal = (rpt?.stats as Record<string, unknown>)?.total;
-        const totalFromSessions = Array.isArray(sessions) ? sessions.reduce((sum: number, s: Record<string, unknown>) => sum + (Number(s.issues_found ?? s.issuesFound ?? 0)), 0) : 0;
+        const totalFromSessions = Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>).reduce((sum: number, s: Record<string, unknown>) => sum + (Number(s.issues_found ?? s.issuesFound ?? 0)), 0) : 0;
         if (totalFromSessions > 0) setIssueCount(totalFromSessions);
         else if (typeof statsTotal === "number") setDoneCount(statsTotal);
       }
@@ -1431,7 +1431,7 @@ export default function TestPage() {
             transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
             className="max-w-[960px] mx-auto mt-4 pb-16"
           >
-            {/* Cached Report Banner */}
+            {/* ── 00 CACHED REPORT BANNER ── */}
             {(report.cached || report.cached_at || report.created_at) && (
               <CachedReportBanner
                 cachedAt={report.cached_at || report.created_at}
@@ -1440,32 +1440,48 @@ export default function TestPage() {
               />
             )}
 
-            {/* The One Thing — single most important takeaway */}
+            {/* ── 01 THE ONE THING ── */}
             {report.the_one_thing && (
               <motion.div
                 initial={{ opacity: 0, y: 20, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-                className="mb-10 p-5 rounded-xl"
-                style={{
-                  backgroundColor: "rgba(232,164,74,0.04)",
-                  border: "1px solid rgba(232,164,74,0.2)",
-                }}
+                className="mb-12"
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <Zap size={14} style={{ color: "var(--accent)" }} />
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>01</span>
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
                     The One Thing
                   </span>
                 </div>
-                <p className="text-[18px] sm:text-[22px] font-bold leading-[1.4]" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                  {report.the_one_thing}
-                </p>
+                <div className="p-5 rounded-xl" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.2)" }}>
+                  <p className="text-[18px] sm:text-[22px] font-bold leading-[1.4]" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                    {report.the_one_thing}
+                  </p>
+                </div>
               </motion.div>
             )}
 
-            {/* Score Hero - with animated gauge */}
+            {/* ── 02 SCORE OVERVIEW ── */}
             <div className="mb-12">
+              <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+              <div className="flex items-center gap-2 mb-5">
+                <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>02</span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                  Score Overview
+                </span>
+                {report.audit_mode && (
+                  <span className="text-[9px] uppercase tracking-[0.12em] px-2 py-0.5 rounded ml-2" style={{
+                    fontFamily: "var(--font-display)",
+                    backgroundColor: "rgba(232,164,74,0.06)",
+                    color: "var(--accent)",
+                    border: "1px solid rgba(232,164,74,0.15)",
+                  }}>
+                    {report.audit_mode} audit
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-8 items-center">
                 <motion.div
                   initial={{ scale: 0.5, opacity: 0 }}
@@ -1494,88 +1510,30 @@ export default function TestPage() {
                   </motion.div>
                 )}
               </div>
-
-              {/* Action bar */}
-              <div className="flex items-center gap-3 mt-6 pt-6 flex-wrap" style={{ borderTop: "1px solid var(--border-default)" }}>
-                {report.fix_prompt && (
-                  <button
-                    onClick={handleCopyPrompt}
-                    className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-all cursor-pointer"
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      backgroundColor: copiedPrompt ? "rgba(74,222,128,0.1)" : "rgba(232,164,74,0.08)",
-                      color: copiedPrompt ? "var(--status-pass)" : "var(--accent)",
-                      border: `1px solid ${copiedPrompt ? "rgba(74,222,128,0.2)" : "rgba(232,164,74,0.15)"}`,
-                    }}
-                  >
-                    <Sparkles size={11} />
-                    {copiedPrompt ? "Copied to clipboard" : "Copy fix prompt for LLM"}
-                  </button>
-                )}
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
-                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
-                >
-                  <Share2 size={11} />
-                  {copied ? "Copied!" : "Share report"}
-                </button>
-                <a
-                  href={`/compare?url1=${encodeURIComponent(testUrl)}`}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline cursor-pointer"
-                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
-                >
-                  <BarChart3 size={11} />
-                  Compare with...
-                </a>
-                <a
-                  href="/"
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"
-                  style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
-                >
-                  Test another site
-                </a>
-              </div>
             </div>
 
-            {/* Audit Mode Badge */}
-            {report.audit_mode && (
-              <div className="mb-8 flex items-center gap-2">
-                <span className="text-[9px] uppercase tracking-[0.12em] px-2 py-1 rounded" style={{
-                  fontFamily: "var(--font-display)",
-                  backgroundColor: "rgba(232,164,74,0.06)",
-                  color: "var(--accent)",
-                  border: "1px solid rgba(232,164,74,0.15)",
-                }}>
-                  {report.audit_mode} audit
-                </span>
-              </div>
-            )}
-
-            {/* Consolidated Executive Narrative */}
-            {report.consolidated?.executive_narrative && (
+            {/* ── 03 EXECUTIVE SUMMARY ── */}
+            {(report.consolidated?.executive_narrative || report.narrative?.executive_summary) && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: 0.1 }}
-                className="mb-14 p-6 rounded-xl"
-                style={{
-                  backgroundColor: "rgba(255,255,255,0.02)",
-                  border: "1px solid var(--border-default)",
-                }}
+                className="mb-12"
               >
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>03</span>
                   <FileText size={13} style={{ color: "var(--accent)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
                     Executive Summary
                   </span>
                 </div>
-                <div className="space-y-4">
+                <div className="p-6 rounded-xl space-y-4" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border-default)" }}>
                   <p className="text-[14px] leading-[1.8]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
-                    {report.consolidated.executive_narrative}
+                    {report.consolidated?.executive_narrative || report.narrative?.executive_summary}
                   </p>
-                  {report.consolidated.grade_justification && (
+                  {report.consolidated?.grade_justification && (
                     <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(232,164,74,0.04)", border: "1px solid rgba(232,164,74,0.12)" }}>
                       <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--accent)" }}>
                         Grade Justification
@@ -1586,7 +1544,7 @@ export default function TestPage() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {report.consolidated.risk_assessment && (
+                    {report.consolidated?.risk_assessment && (
                       <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.12)" }}>
                         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--status-fail)" }}>
                           Risk if Unfixed
@@ -1596,7 +1554,7 @@ export default function TestPage() {
                         </p>
                       </div>
                     )}
-                    {report.consolidated.competitive_position && (
+                    {report.consolidated?.competitive_position && (
                       <div className="p-3 rounded-lg" style={{ backgroundColor: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.12)" }}>
                         <span className="text-[10px] font-semibold uppercase tracking-[0.08em] block mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--status-pass)" }}>
                           Competitive Position
@@ -1611,7 +1569,7 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Category Scores - animated bars */}
+            {/* ── 04 CATEGORY BREAKDOWN ── */}
             {report.category_scores && (
               <TooltipProvider delayDuration={100}>
                 <motion.div
@@ -1619,11 +1577,13 @@ export default function TestPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.5, delay: 0.1 }}
-                  className="mb-16"
+                  className="mb-12"
                 >
+                  <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                   <div className="flex items-center gap-2 mb-5">
+                    <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>04</span>
                     <BarChart3 size={13} style={{ color: "var(--text-muted)" }} />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Score Breakdown</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Category Breakdown</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
                     {(["accessibility", "seo", "performance", "content", "security", "ux"] as const).map((cat, idx) => {
@@ -1666,18 +1626,20 @@ export default function TestPage() {
               </TooltipProvider>
             )}
 
-            {/* Funnel Drop-off Visualization */}
+            {/* ── 05 WORKFLOW FUNNEL ── */}
             {report.funnel_analysis?.funnel_stages && report.funnel_analysis.funnel_stages.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: 0.15 }}
-                className="mb-16"
+                className="mb-12"
               >
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>05</span>
                   <ArrowRight size={13} style={{ color: "var(--text-muted)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
                     Workflow Funnel
                   </span>
                   {report.workflow?.primary_workflow && (
@@ -1776,33 +1738,86 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Executive Summary */}
-            {report.narrative?.executive_summary && (
+            {/* (standalone Executive Summary removed -- merged into section 03) */}
+
+            {/* ── 06 WHAT WORKS / WHAT DOESN'T ── */}
+            {(report.narrative?.what_works?.length || report.narrative?.what_doesnt_work?.length) ? (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="mb-14"
+                className="mb-12"
               >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <p className="text-[15px] leading-[1.8] pl-4" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)", borderLeft: "2px solid var(--accent)" }}>
-                  {report.narrative.executive_summary}
-                </p>
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="flex items-center gap-2 mb-5">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>06</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                    What Works / What Doesn&apos;t
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                  {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <CheckCircle2 size={13} style={{ color: "var(--status-pass)" }} />
+                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Works</span>
+                      </div>
+                      <div className="space-y-3">
+                        {report.narrative.what_works.slice(0, 4).map((item, i) => (
+                          <motion.div key={i} initial={{ opacity: 0, x: -8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
+                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
+                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (() => {
+                    const a11yKeywords = ["accessibility", "a11y", "landmark", "aria", "alt text", "contrast", "screen reader", "keyboard focus", "wcag"];
+                    const hasA11yAudit = (report.narrative?.accessibility_audit?.total_violations || 0) > 0;
+                    const filtered = hasA11yAudit
+                      ? report.narrative!.what_doesnt_work!.filter(item => !a11yKeywords.some(kw => item.title.toLowerCase().includes(kw)))
+                      : report.narrative!.what_doesnt_work!;
+                    if (filtered.length === 0) return null;
+                    return (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <XCircle size={13} style={{ color: "var(--status-fail)" }} />
+                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Doesn&apos;t Work</span>
+                      </div>
+                      <div className="space-y-3">
+                        {filtered.slice(0, 4).map((item, i) => (
+                          <motion.div key={i} initial={{ opacity: 0, x: 8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
+                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
+                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </div>
+                    );
+                  })()}
+                </div>
               </motion.div>
-            )}
+            ) : null}
 
-            {/* Who Can't Use Your Site */}
+            {/* ── 07 WHO TESTED YOUR SITE ── */}
             {report.stats && (report.stats.blocked > 0 || report.stats.struggled > 0) && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="mb-14"
+                className="mb-12"
               >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>07</span>
                   <Users size={13} style={{ color: "var(--text-muted)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Who Can&apos;t Use Your Site</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Who Tested Your Site</span>
+                </div>
+                {/* Impact summary */}
+                <div className="flex items-center gap-2 mb-4">
+                  <Users size={11} style={{ color: "var(--text-muted)" }} />
+                  <span className="text-[10px] uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Who Can&apos;t Use Your Site</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* Blocked */}
@@ -1869,128 +1884,18 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Top Issues - with severity badges */}
-            {report.narrative?.top_issues && report.narrative.top_issues.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="mb-14"
-              >
-                <div className="flex items-center gap-2 mb-5">
-                  <Zap size={13} style={{ color: "var(--status-fail)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Top Issues</span>
-                </div>
-                <div className="space-y-3">
-                  {report.narrative.top_issues.map((issue: TopIssue, i: number) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, y: 8 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{ delay: i * 0.05 }}
-                      className="flex gap-3 p-4 rounded-lg"
-                      style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border-default)" }}
-                    >
-                      <span
-                        className="text-[16px] font-bold tabular-nums shrink-0 mt-0.5"
-                        style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}
-                      >
-                        {issue.rank || i + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{issue.title}</span>
-                          <SeverityBadge severity={issue.severity || "info"} />
-                          {issue.implementation_complexity && (
-                            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.04)", color: "var(--text-muted)" }}>
-                              {issue.implementation_complexity} fix
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[12px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{issue.description}</p>
-                        {issue.persona_experiences && (
-                          <p className="text-[11px] leading-relaxed mt-1.5 italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue.persona_experiences}</p>
-                        )}
-                        {issue.affected_personas && issue.affected_personas.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {issue.affected_personas.map((name, j) => (
-                              <span key={j} className="text-[9px] px-1.5 py-0.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.03)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}>
-                                {name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {issue.fix && (
-                          <p className="text-[11px] mt-2 px-2.5 py-1.5 rounded" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)", backgroundColor: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.08)" }}>
-                            Fix: {issue.fix}
-                          </p>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* AI & Search Readiness */}
-            {report.ai_seo?.checks && report.ai_seo.checks.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="mb-14"
-              >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="flex items-center justify-between mb-5">
-                  <div className="flex items-center gap-2">
-                    <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
-                    <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>AI & Search Readiness</span>
-                  </div>
-                  {report.ai_seo.ai_readability_score !== undefined && (
-                    <span className="text-[14px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: scoreColor(report.ai_seo.ai_readability_score) }}>
-                      {report.ai_seo.ai_readability_score}/100
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {report.ai_seo.checks.map((check: { name: string; pass: boolean; detail: string }, i: number) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, x: -8 }}
-                      whileInView={{ opacity: 1, x: 0 }}
-                      viewport={{ once: true }}
-                      transition={{ delay: i * 0.03 }}
-                      className="flex items-start gap-2.5 p-2.5 rounded-lg"
-                      style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}
-                    >
-                      <div className="mt-0.5 shrink-0">
-                        {check.pass ? (
-                          <Check size={11} style={{ color: "var(--status-pass)" }} />
-                        ) : (
-                          <X size={11} style={{ color: "var(--status-fail)" }} />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: check.pass ? "var(--text-secondary)" : "var(--text-primary)" }}>{check.name}</span>
-                        <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{check.detail}</div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* Persona Stories - expandable */}
+            {/* Persona Stories - part of section 07 */}
             {report.narrative?.persona_verdicts && report.narrative.persona_verdicts.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="mb-14"
+                className="mb-12"
               >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-5" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Persona Stories</div>
+                <div className="flex items-center gap-2 mb-5">
+                  <Users size={11} style={{ color: "var(--text-muted)" }} />
+                  <span className="text-[10px] uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Persona Stories</span>
+                </div>
                 <div className="space-y-3">
                   {report.narrative.persona_verdicts.map((v: PersonaVerdict, i: number) => {
                     const session = report.sessions_summary?.find(s => s.persona_id === v.persona_id);
@@ -2226,149 +2131,129 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Emotional Journey Map */}
-            {report.emotional_journeys && Object.keys(report.emotional_journeys).length > 0 && (
+            {/* (Emotional Journey removed -- data rendered inside persona cards via v.emotional_journey) */}
+
+            {/* ── 08 TOP ISSUES ── */}
+            {report.narrative?.top_issues && report.narrative.top_issues.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="mb-14"
+                className="mb-12"
               >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
-                  <BarChart3 size={13} style={{ color: "var(--accent)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Emotional Journey</span>
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>08</span>
+                  <Zap size={13} style={{ color: "var(--status-fail)" }} />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Top Issues</span>
                 </div>
-                <div className="space-y-6">
-                  {Object.entries(report.emotional_journeys).map(([pid, journey]) => {
-                    if (!journey.stages || journey.stages.length === 0) return null;
-                    const personaVerdict = report.narrative?.persona_verdicts?.find(pv => pv.persona_id === pid);
-                    const personaName = personaVerdict?.name || personaVerdict?.persona_name || pid;
-                    const dimensions = [
-                      { key: "trust" as const, label: "Trust", color: "#22c55e" },
-                      { key: "delight" as const, label: "Delight", color: "#3b82f6" },
-                      { key: "confusion" as const, label: "Confusion", color: "#f59e0b" },
-                      { key: "frustration" as const, label: "Frustration", color: "#ef4444" },
-                      { key: "intent_to_return" as const, label: "Return Intent", color: "#8b5cf6" },
-                    ];
-                    return (
-                      <div key={pid} className="p-4 rounded-xl" style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[12px] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{personaName}</span>
+                <div className="space-y-3">
+                  {report.narrative.top_issues.map((issue: TopIssue, i: number) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, y: 8 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: i * 0.05 }}
+                      className="flex gap-3 p-4 rounded-lg"
+                      style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border-default)" }}
+                    >
+                      <span
+                        className="text-[16px] font-bold tabular-nums shrink-0 mt-0.5"
+                        style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}
+                      >
+                        {issue.rank || i + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-[13px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{issue.title}</span>
+                          <SeverityBadge severity={issue.severity || "info"} />
+                          {issue.implementation_complexity && (
+                            <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.04)", color: "var(--text-muted)" }}>
+                              {issue.implementation_complexity} fix
+                            </span>
+                          )}
                         </div>
-                        {journey.overall_sentiment && (
-                          <p className="text-[10px] leading-relaxed mb-3" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{journey.overall_sentiment}</p>
+                        <p className="text-[12px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-secondary)" }}>{issue.description}</p>
+                        {issue.persona_experiences && (
+                          <p className="text-[11px] leading-relaxed mt-1.5 italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{issue.persona_experiences}</p>
                         )}
-                        {/* Stage labels */}
-                        <div className="flex gap-1 mb-2">
-                          <div className="w-[72px] shrink-0" />
-                          {journey.stages.map((stage, si) => (
-                            <div key={si} className="flex-1 text-center">
-                              <span className="text-[8px] uppercase tracking-[0.08em]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{stage.stage}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {/* Dimension rows */}
-                        {dimensions.map((dim) => (
-                          <div key={dim.key} className="flex items-center gap-1 mb-1.5">
-                            <span className="text-[9px] w-[72px] shrink-0 text-right pr-2" style={{ fontFamily: "var(--font-display)", color: dim.color }}>{dim.label}</span>
-                            {journey.stages.map((stage, si) => {
-                              const val = stage[dim.key];
-                              return (
-                                <div key={si} className="flex-1 flex items-center justify-center">
-                                  <div
-                                    className="rounded-sm"
-                                    style={{
-                                      width: `${Math.max(14, val * 10)}%`,
-                                      height: "6px",
-                                      backgroundColor: dim.color,
-                                      opacity: 0.15 + (val / 10) * 0.85,
-                                      transition: "all 0.3s ease",
-                                    }}
-                                    title={`${dim.label}: ${val}/10`}
-                                  />
-                                </div>
-                              );
-                            })}
+                        {issue.affected_personas && issue.affected_personas.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {issue.affected_personas.map((name, j) => (
+                              <span key={j} className="text-[9px] px-1.5 py-0.5 rounded" style={{ fontFamily: "var(--font-mono)", backgroundColor: "rgba(255,255,255,0.03)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}>
+                                {name}
+                              </span>
+                            ))}
                           </div>
-                        ))}
-                        {/* Scale legend */}
-                        <div className="flex items-center gap-1 mt-2">
-                          <div className="w-[72px] shrink-0" />
-                          <div className="flex-1 flex items-center justify-between">
-                            <span className="text-[8px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.5 }}>1</span>
-                            <span className="text-[8px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.5 }}>10</span>
-                          </div>
-                        </div>
+                        )}
+                        {issue.fix && (
+                          <p className="text-[11px] mt-2 px-2.5 py-1.5 rounded" style={{ fontFamily: "var(--font-mono)", color: "var(--status-pass)", backgroundColor: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.08)" }}>
+                            Fix: {issue.fix}
+                          </p>
+                        )}
                       </div>
-                    );
-                  })}
+                    </motion.div>
+                  ))}
                 </div>
               </motion.div>
             )}
 
-            {/* What Works / What Doesn't */}
-            {(report.narrative?.what_works?.length || report.narrative?.what_doesnt_work?.length) ? (
+            {/* AI & Search Readiness -- sub-section of Top Issues area */}
+            {report.ai_seo?.checks && report.ai_seo.checks.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="mb-14"
+                className="mb-12"
               >
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                  {report.narrative?.what_works && report.narrative.what_works.length > 0 && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <CheckCircle2 size={13} style={{ color: "var(--status-pass)" }} />
-                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Works</span>
-                      </div>
-                      <div className="space-y-3">
-                        {report.narrative.what_works.slice(0, 4).map((item, i) => (
-                          <motion.div key={i} initial={{ opacity: 0, x: -8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
-                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
-                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
-                          </motion.div>
-                        ))}
-                      </div>
-                    </div>
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-2">
+                    <Bot size={14} style={{ color: "var(--cat-ai-seo)" }} />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>AI & Search Readiness</span>
+                  </div>
+                  {report.ai_seo.ai_readability_score !== undefined && (
+                    <span className="text-[14px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: scoreColor(report.ai_seo.ai_readability_score) }}>
+                      {report.ai_seo.ai_readability_score}/100
+                    </span>
                   )}
-                  {report.narrative?.what_doesnt_work && report.narrative.what_doesnt_work.length > 0 && (() => {
-                    // Filter out accessibility items that are already shown in the dedicated audit section
-                    const a11yKeywords = ["accessibility", "a11y", "landmark", "aria", "alt text", "contrast", "screen reader", "keyboard focus", "wcag"];
-                    const hasA11yAudit = (report.narrative?.accessibility_audit?.total_violations || 0) > 0;
-                    const filtered = hasA11yAudit
-                      ? report.narrative!.what_doesnt_work!.filter(item => !a11yKeywords.some(kw => item.title.toLowerCase().includes(kw)))
-                      : report.narrative!.what_doesnt_work!;
-                    if (filtered.length === 0) return null;
-                    return (
-                    <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <XCircle size={13} style={{ color: "var(--status-fail)" }} />
-                        <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Doesn&apos;t Work</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {report.ai_seo.checks.map((check: { name: string; pass: boolean; detail: string }, i: number) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, x: -8 }}
+                      whileInView={{ opacity: 1, x: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: i * 0.03 }}
+                      className="flex items-start gap-2.5 p-2.5 rounded-lg"
+                      style={{ backgroundColor: "rgba(255,255,255,0.015)", border: "1px solid var(--border-default)" }}
+                    >
+                      <div className="mt-0.5 shrink-0">
+                        {check.pass ? (
+                          <Check size={11} style={{ color: "var(--status-pass)" }} />
+                        ) : (
+                          <X size={11} style={{ color: "var(--status-fail)" }} />
+                        )}
                       </div>
-                      <div className="space-y-3">
-                        {filtered.slice(0, 4).map((item, i) => (
-                          <motion.div key={i} initial={{ opacity: 0, x: 8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
-                            <div className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>{item.title}</div>
-                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{item.detail}</p>
-                          </motion.div>
-                        ))}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[11px] font-medium" style={{ fontFamily: "var(--font-display)", color: check.pass ? "var(--text-secondary)" : "var(--text-primary)" }}>{check.name}</span>
+                        <div className="text-[10px] leading-relaxed" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>{check.detail}</div>
                       </div>
-                    </div>
-                    );
-                  })()}
+                    </motion.div>
+                  ))}
                 </div>
               </motion.div>
-            ) : null}
+            )}
 
-            {/* Accessibility Audit */}
+            {/* ── 09 ACCESSIBILITY AUDIT ── */}
             {report.narrative?.accessibility_audit && (report.narrative.accessibility_audit.total_violations || 0) > 0 && (
-              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-12">
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>09</span>
                   <Eye size={14} style={{ color: "var(--cat-accessibility)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Accessibility Audit</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Accessibility Audit</span>
                 </div>
                 <div className="flex flex-wrap gap-3 mb-4">
                   {[
@@ -2402,13 +2287,12 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Chaos/Security Test Summary */}
+            {/* Chaos/Security Test Summary -- sub-section near accessibility */}
             {report.narrative?.chaos_test_summary && (report.narrative.chaos_test_summary.inputs_tested || 0) > 0 && (
-              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-12">
                 <div className="flex items-center gap-2 mb-5">
                   <Shield size={14} style={{ color: "var(--cat-security)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Security / Chaos Testing</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Security / Chaos Testing</span>
                 </div>
                 <div className="flex flex-wrap gap-3 mb-4">
                   <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
@@ -2436,13 +2320,14 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Deterministic Quick Wins from scoring engine */}
+            {/* ── 10 QUICK WINS ── */}
             {report.quick_wins && report.quick_wins.length > 0 && (
-              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="h-px mb-10" style={{ backgroundColor: "var(--border-default)" }} />
+              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-12">
+                <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
                 <div className="flex items-center gap-2 mb-5">
+                  <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>10</span>
                   <Zap size={13} style={{ color: "var(--accent)" }} />
-                  <span className="text-[11px] font-medium uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Quick Wins</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Quick Wins</span>
                 </div>
                 <div className="space-y-3">
                   {report.quick_wins.map((qw, i) => (
@@ -2490,10 +2375,10 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Annotated Screenshot */}
+            {/* Annotated Screenshot -- between quick wins and fix it */}
             {(report.annotated_screenshot_url || report.annotated_screenshot_b64) && (
-              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-14">
-                <div className="text-[11px] font-medium uppercase tracking-[0.1em] mb-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Annotated Screenshot</div>
+              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-12">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] mb-4" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Annotated Screenshot</div>
                 <img
                   src={report.annotated_screenshot_b64 ? `data:image/png;base64,${report.annotated_screenshot_b64}` : report.annotated_screenshot_url ? `${API_URL}${report.annotated_screenshot_url}` : ""}
                   alt="Annotated screenshot"
@@ -2504,8 +2389,13 @@ export default function TestPage() {
               </motion.div>
             )}
 
-            {/* Bottom Action Bar */}
+            {/* ── 11 FIX IT ── */}
             <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
+            <div className="flex items-center gap-2 mb-5">
+              <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>11</span>
+              <Sparkles size={13} style={{ color: "var(--accent)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Fix It</span>
+            </div>
             <div className="flex items-center gap-3 flex-wrap">
               {report.fix_prompt && (
                 <button
@@ -2519,7 +2409,7 @@ export default function TestPage() {
                   }}
                 >
                   <Sparkles size={11} />
-                  {copiedPrompt ? "Copied to clipboard" : "Copy AI fix prompt"}
+                  {copiedPrompt ? "Copied to clipboard" : "Copy fix prompt"}
                 </button>
               )}
               <button
@@ -2530,6 +2420,14 @@ export default function TestPage() {
                 <Share2 size={11} />
                 {copied ? "Copied!" : "Share report"}
               </button>
+              <a
+                href={`/compare?url1=${encodeURIComponent(testUrl)}`}
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline cursor-pointer"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }}
+              >
+                <BarChart3 size={11} />
+                Compare with...
+              </a>
               <a
                 href="/"
                 className="flex items-center gap-2 px-4 py-2 rounded-md text-[11px] font-medium transition-colors no-underline ml-auto"

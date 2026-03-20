@@ -1636,38 +1636,60 @@ export default function TestPage() {
                 className="mb-12"
               >
                 <div className="h-px mb-8" style={{ backgroundColor: "var(--border-default)" }} />
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", opacity: 0.4 }}>05</span>
                   <ArrowRight size={13} style={{ color: "var(--text-muted)" }} />
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
                     Workflow Funnel
                   </span>
-                  {report.workflow?.primary_workflow && (
-                    <span className="text-[10px] ml-1" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)", opacity: 0.7 }}>
-                      -- {report.workflow.primary_workflow}
+                  {report.workflow?.site_type && (
+                    <span className="text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ml-1" style={{
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--accent)",
+                      backgroundColor: "rgba(232,164,74,0.1)",
+                      border: "1px solid rgba(232,164,74,0.2)",
+                    }}>
+                      {report.workflow.site_type}
                     </span>
                   )}
                 </div>
-                {report.funnel_analysis.biggest_drop_off && (
-                  <p className="text-[12px] mb-4 leading-[1.6]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-body)" }}>
-                    {report.funnel_analysis.biggest_drop_off}
+                {report.workflow?.primary_workflow && (
+                  <p className="text-[11px] mb-3 leading-[1.5]" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
+                    {report.workflow.primary_workflow}
                   </p>
+                )}
+                {report.funnel_analysis.biggest_drop_off && (
+                  <div className="mb-4 p-3 rounded-lg flex items-start gap-2" style={{ backgroundColor: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)" }}>
+                    <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" style={{ color: "var(--status-fail)" }} />
+                    <p className="text-[12px] font-medium leading-[1.6]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-body)" }}>
+                      {report.funnel_analysis.biggest_drop_off}
+                    </p>
+                  </div>
                 )}
                 <div className="space-y-2.5">
                   {report.funnel_analysis.funnel_stages.map((stage, idx) => {
+                    const notReached = stage.attempted === 0 && stage.completed === 0;
                     const completionRate = stage.attempted > 0
                       ? Math.round(((stage.completed / stage.attempted) * 100))
                       : 0;
-                    const barColor = completionRate > 80
-                      ? "var(--status-pass)"
-                      : completionRate >= 40
-                        ? "#f59e0b"
-                        : "var(--status-fail)";
-                    const barBg = completionRate > 80
-                      ? "rgba(34,197,94,0.08)"
-                      : completionRate >= 40
-                        ? "rgba(245,158,11,0.08)"
-                        : "rgba(239,68,68,0.08)";
+                    const barColor = notReached
+                      ? "var(--text-muted)"
+                      : completionRate > 60
+                        ? "var(--status-pass)"
+                        : completionRate >= 20
+                          ? "#f59e0b"
+                          : "var(--status-fail)";
+                    const barBg = notReached
+                      ? "rgba(128,128,128,0.06)"
+                      : completionRate > 60
+                        ? "rgba(34,197,94,0.08)"
+                        : completionRate >= 20
+                          ? "rgba(245,158,11,0.08)"
+                          : "rgba(239,68,68,0.08)";
+                    // Derive a display name: use stage.step; if it looks like just a number, try workflow_steps
+                    const stepName = (typeof stage.step === "string" && stage.step.trim() !== "" && !/^\d+$/.test(stage.step.trim()))
+                      ? stage.step
+                      : (report.workflow?.workflow_steps?.[idx] ?? stage.step ?? `Step ${idx + 1}`);
                     return (
                       <motion.div
                         key={idx}
@@ -1676,7 +1698,7 @@ export default function TestPage() {
                         viewport={{ once: true }}
                         transition={{ delay: 0.05 * idx }}
                         className="rounded-lg p-3"
-                        style={{ backgroundColor: barBg, border: `1px solid ${barColor}22` }}
+                        style={{ backgroundColor: barBg, border: `1px solid ${barColor}22`, opacity: notReached ? 0.55 : 1 }}
                       >
                         <div className="flex items-center justify-between mb-1.5">
                           <div className="flex items-center gap-2">
@@ -1684,29 +1706,37 @@ export default function TestPage() {
                               {idx + 1}
                             </span>
                             <span className="text-[12px] font-medium" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                              {stage.step}
+                              {stepName}
                             </span>
                           </div>
                           <div className="flex items-center gap-3">
-                            <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                              {stage.completed}/{stage.attempted}
-                            </span>
-                            <span className="text-[12px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: barColor }}>
-                              {completionRate}%
-                            </span>
+                            {notReached ? (
+                              <span className="text-[10px] font-medium italic" style={{ fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+                                Not reached
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                                  {stage.completed}/{stage.attempted}
+                                </span>
+                                <span className="text-[12px] font-bold tabular-nums" style={{ fontFamily: "var(--font-mono)", color: barColor }}>
+                                  {completionRate}%
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                         <div className="w-full rounded-full overflow-hidden" style={{ height: 4, backgroundColor: "rgba(255,255,255,0.05)" }}>
                           <motion.div
                             initial={{ width: 0 }}
-                            whileInView={{ width: `${completionRate}%` }}
+                            whileInView={{ width: notReached ? "0%" : `${completionRate}%` }}
                             viewport={{ once: true }}
                             transition={{ duration: 0.8, delay: 0.1 * idx, ease: [0.16, 1, 0.3, 1] }}
                             className="h-full rounded-full"
                             style={{ backgroundColor: barColor }}
                           />
                         </div>
-                        {stage.drop_off_rate > 20 && stage.primary_blockers && stage.primary_blockers.length > 0 && (
+                        {!notReached && stage.drop_off_rate > 20 && stage.primary_blockers && stage.primary_blockers.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             {stage.primary_blockers.slice(0, 3).map((blocker, bi) => (
                               <span key={bi} className="text-[10px] px-2 py-0.5 rounded-full" style={{

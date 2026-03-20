@@ -4,12 +4,15 @@ import base64
 import hashlib
 import json
 import asyncio
+import logging
 import os
 import random
 import time
 import traceback
 
 from personas import ADVERSARIAL_INPUTS
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # System prompt template
@@ -28,25 +31,35 @@ BEHAVIORAL RULES:
 {behavioral_rules}
 
 You will be given the page's visible text (possibly truncated) and a list of
-interactive elements on the page. Decide what action to take NEXT as this
-persona would.
+interactive elements on the page. Each element has an index like [0], [1], etc.
+Decide what action to take NEXT as this persona would.
 
 Respond with ONLY valid JSON — no markdown fences, no extra text:
 {{
   "action": "click|type|scroll|back|tab|stuck|done",
-  "target": "visible element text, ARIA label, or CSS selector to interact with",
+  "target": "element index like [3], visible text, ARIA label, or CSS selector",
   "value": "text to type (only for type action, otherwise empty string)",
   "reasoning": "one sentence from this persona's perspective explaining why"
 }}
 
-ACTIONS:
-- click  — click on an element matching `target`
-- type   — focus the `target` input and type `value` into it
-- scroll — scroll the page (target = "up" or "down")
-- back   — press the browser back button
-- tab    — press Tab to move focus to the next element
-- stuck  — you cannot figure out what to do next
-- done   — you have finished exploring or completed the task
+ACTIONS (pick exactly one):
+- click  — click on a link, button, or interactive element. Set target to the
+           element index (e.g. "[3]") or its visible text. Use this to navigate
+           to new pages, submit forms, open menus, etc.
+- type   — click on an input/textarea and type text into it. Set target to the
+           input element and value to the text you want to enter.
+- scroll — scroll the viewport. Set target to "up" or "down".
+- back   — press the browser back button. Use when you hit a dead end.
+- tab    — press Tab to move keyboard focus to the next element.
+- stuck  — you truly cannot proceed (no relevant elements, page is broken).
+- done   — you have finished exploring or completed all tasks.
+
+IMPORTANT RULES:
+- Prefer using element indices (e.g. "[3]") as targets — they are most reliable.
+- Do NOT repeat the same failing action. If an action failed, try a different
+  element or a different approach.
+- Always make progress. Do not click the same link twice in a row.
+- If you see a form, fill it out field by field using "type", then "click" submit.
 """
 
 
@@ -197,10 +210,30 @@ def _format_elements(elements: list[dict]) -> str:
 # Gemini LLM call
 # ---------------------------------------------------------------------------
 
-async def _ask_llm(model, system_prompt: str, user_prompt: str) -> dict:
-    """Call Gemini and parse JSON response."""
+async def _ask_llm(model, system_prompt: str, user_prompt: str,
+                   recent_actions: list[dict] | None = None) -> dict:
+    """Call Gemini and parse JSON response.
+
+    *recent_actions* is an optional list of the last 2-3 action records so the
+    LLM has context about what it already tried (prevents repetition).
+    """
+    # Build a context section from recent actions
+    history_section = ""
+    if recent_actions:
+        history_lines = []
+        for rec in recent_actions[-3:]:
+            status = "OK" if rec.get("executed") else f"FAILED ({rec.get('error', 'unknown')})"
+            history_lines.append(
+                f"  - {rec.get('action','?')} target=\"{rec.get('target','')}\" "
+                f"value=\"{rec.get('value','')}\" => {status}"
+            )
+        history_section = (
+            "\n\nYOUR RECENT ACTIONS (do NOT repeat failed ones):\n"
+            + "\n".join(history_lines)
+        )
+
     try:
-        full_prompt = system_prompt + "\n\n" + user_prompt
+        full_prompt = system_prompt + "\n\n" + user_prompt + history_section
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 model.generate_content,
@@ -422,6 +455,10 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
             all_errors.append(f"Navigation failed: {str(e)[:200]}")
             return _make_result(persona, [], all_errors, [], False, session_start, [], url, 0)
 
+        # Track consecutive failures on same target for Problem 2
+        _consecutive_fail_target: str | None = None
+        _consecutive_fail_count: int = 0
+
         # Agent loop — up to max_steps steps
         for step in range(max_steps):
             state = await _extract_page_state(page)
@@ -446,7 +483,25 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
                 f"{workflow_hint}"
             )
 
-            decision = await _ask_llm(model, system_prompt, user_prompt)
+            # Pass recent action history so the LLM has context (Problem 2)
+            decision = await _ask_llm(model, system_prompt, user_prompt,
+                                      recent_actions=actions_log[-3:] if actions_log else None)
+
+            # Problem 2: If we failed 2x in a row on the same target, force
+            # the agent to try something different (scroll or pick another element)
+            chosen_target = decision.get("target", "")
+            if (
+                _consecutive_fail_count >= 2
+                and chosen_target == _consecutive_fail_target
+                and decision.get("action") not in ("stuck", "done", "scroll", "back")
+            ):
+                # Override: force a scroll or back action to break the loop
+                decision = {
+                    "action": "scroll",
+                    "target": "down",
+                    "value": "",
+                    "reasoning": "Forced scroll — previous action failed twice on the same target.",
+                }
 
             action_record = {
                 "step": step + 1,
@@ -463,19 +518,32 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
             action_record["executed"] = exec_result["executed"]
             action_record["error"] = exec_result.get("error")
 
-            # Track workflow progress: advance step when reasoning mentions
-            # completing the current step or moving to the next action
+            # Track consecutive failures on same target (Problem 2)
+            if not exec_result["executed"] and decision.get("action") not in ("stuck", "done"):
+                if chosen_target == _consecutive_fail_target:
+                    _consecutive_fail_count += 1
+                else:
+                    _consecutive_fail_target = chosen_target
+                    _consecutive_fail_count = 1
+            else:
+                _consecutive_fail_target = None
+                _consecutive_fail_count = 0
+
+            # Problem 1: Track workflow progress based on successful action
+            # execution rather than keyword overlap in reasoning text.
+            # Each successfully executed action advances the workflow step
+            # counter (capped at total steps). "done" and "navigate" (URL
+            # changed) also count.
             if workflow_steps and current_workflow_step < len(workflow_steps):
-                reasoning_lower = decision.get("reasoning", "").lower()
-                current_step_lower = workflow_steps[current_workflow_step].lower()
-                # Advance if the agent's action is relevant to the current workflow
-                # step (simple keyword overlap heuristic)
-                step_keywords = set(current_step_lower.split())
-                reasoning_words = set(reasoning_lower.split())
-                overlap = step_keywords & reasoning_words - {"the", "a", "to", "and", "or", "on", "in", "for"}
-                if (len(overlap) >= 2 and exec_result["executed"]) or \
-                   ("next" in reasoning_lower and "step" in reasoning_lower):
-                    current_workflow_step += 1
+                action_name = decision.get("action", "")
+                url_changed = (page.url != action_record["url"])
+                if exec_result["executed"] and action_name not in ("stuck",):
+                    # Advance on: done, navigate (URL changed), or any
+                    # successfully executed click/type/scroll/back/tab
+                    if action_name == "done" or url_changed or action_name in ("click", "type"):
+                        current_workflow_step = min(
+                            current_workflow_step + 1, len(workflow_steps)
+                        )
 
             if exec_result.get("error"):
                 all_errors.append(f"Step {step + 1}: {exec_result['error']}")
@@ -483,22 +551,24 @@ async def _agent_loop(url: str, persona: dict, site_context: dict, model,
             if not exec_result["executed"] and decision["action"] not in ("stuck", "done"):
                 dead_ends.append(f"Step {step + 1}: Could not {decision['action']} '{decision.get('target', '')}'")
 
-            # Capture screenshot after action
-            try:
-                ss_bytes = await page.screenshot(type="jpeg", quality=50)
-                ss_b64 = base64.b64encode(ss_bytes).decode()
-                action_record["screenshot_b64"] = ss_b64
-                if on_step_screenshot:
-                    await on_step_screenshot(persona["id"], step + 1, ss_b64)
-            except Exception:
-                pass
-
-            actions_log.append(action_record)
-
+            # Wait for the page to settle BEFORE taking the screenshot (Problem 3)
             try:
                 await page.wait_for_timeout(800)
             except Exception:
                 pass
+
+            # Capture screenshot after page has settled
+            try:
+                ss_bytes = await page.screenshot(type="jpeg", quality=40)
+                ss_b64 = base64.b64encode(ss_bytes).decode()
+                action_record["screenshot_b64"] = ss_b64
+                if on_step_screenshot:
+                    await on_step_screenshot(persona["id"], step + 1, ss_b64)
+            except Exception as ss_err:
+                logger.warning("Screenshot failed at step %d for %s: %s",
+                               step + 1, persona.get("id", "?"), ss_err)
+
+            actions_log.append(action_record)
 
             if decision["action"] == "done":
                 task_completed = True
@@ -548,10 +618,10 @@ def _make_result(persona, actions, errors, dead_ends, completed, start_time, con
         "final_url": final_url,
         "steps_taken": steps,
         "issues_found": len(errors) + len(dead_ends),
+        # Always include workflow fields so the frontend never sees them missing
+        "max_workflow_step": max_workflow_step if max_workflow_step is not None else 0,
+        "total_workflow_steps": total_workflow_steps if total_workflow_steps is not None else 0,
     }
-    if max_workflow_step is not None:
-        result["max_workflow_step"] = max_workflow_step
-        result["total_workflow_steps"] = total_workflow_steps
     return result
 
 

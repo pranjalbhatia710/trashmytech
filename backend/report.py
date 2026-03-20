@@ -681,30 +681,31 @@ async def generate_report(
         if external_api_data:
             report["external_api_data"] = external_api_data
 
-        # Attach screenshot references
-        report["sessions_summary"] = [
-            {
-                "persona_id": s["persona"]["id"],
-                "persona_name": s["persona"]["name"],
-                "screenshots": [
-                    {
-                        "step": step.get("step_number") or step.get("step"),
-                        "description": step.get("result") or step.get("reasoning") or "",
-                        "screenshot_b64": step.get("screenshot_b64"),
-                    }
-                    for step in s.get("steps", [])
-                    if step.get("screenshot_b64")
-                ],
-            }
-            for s in sessions
-        ]
-
     except json.JSONDecodeError as e:
         report["error"] = f"LLM returned invalid JSON: {str(e)[:100]}"
         report["narrative"] = _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations)
     except Exception:
         report["error"] = f"Gemini call failed: {traceback.format_exc()[:300]}"
         report["narrative"] = _fallback_narrative(crawl_data, sessions, real_findings, tool_limitations)
+
+    # Attach screenshot references — OUTSIDE try block so screenshots are
+    # always present even when the narrative LLM call fails.
+    report["sessions_summary"] = [
+        {
+            "persona_id": s.get("persona", {}).get("id", s.get("agent_id", "")),
+            "persona_name": s.get("persona", {}).get("name", ""),
+            "screenshots": [
+                {
+                    "step": step.get("step_number") or step.get("step"),
+                    "description": step.get("result") or step.get("reasoning") or "",
+                    "screenshot_b64": step.get("screenshot_b64"),
+                }
+                for step in (s.get("steps") or s.get("actions") or [])
+                if step.get("screenshot_b64")
+            ],
+        }
+        for s in sessions
+    ]
 
     # Annotate the crawl screenshot with top findings
     crawl_screenshot = crawl_data.get("screenshot_base64")
